@@ -149,26 +149,30 @@ class BackendService {
     final name = link.startsWith('/') ? link.substring(1) : link;
     final preferOffline = PreferenceService.getPreferOffline();
 
-    // 第1层: 离线内容库（gzip 压缩，读取即解压）
-    // 如果 preferOffline=true（默认），始终优先用离线数据
-    if (isOfflineAvailable && preferOffline) {
-      try {
-        final html = await OfflineContentDb.getPageHtml(name);
-        if (html != null && html.isNotEmpty) {
-          final info = await OfflineContentDb.getPageInfo(name);
-          return PageData(
-            link: name,
-            title: info?['title'] as String? ?? '',
-            content: html,
-            tags: (info?['tags'] as String? ?? '').split(',')
-                .where((t) => t.isNotEmpty).toList(),
-            html: html,
-          );
-        }
-      } catch (_) {}
+    // ═══ 模式A: 优先离线 ═══
+    if (preferOffline) {
+      if (isOfflineAvailable) {
+        try {
+          final html = await OfflineContentDb.getPageHtml(name);
+          if (html != null && html.isNotEmpty) {
+            final info = await OfflineContentDb.getPageInfo(name);
+            return PageData(
+              link: name,
+              title: info?['title'] as String? ?? '',
+              content: html,
+              tags: (info?['tags'] as String? ?? '').split(',')
+                  .where((t) => t.isNotEmpty).toList(),
+              html: html,
+            );
+          }
+        } catch (_) {}
+      }
+      // 离线库没有此页 — 不走网络，直接报告
+      throw OfflinePageNotAvailableException(name);
     }
 
-    // 第2层: 运行时缓存（逐页缓存）
+    // ═══ 模式B: 不优先离线 ═══
+    // 第1层: 运行时缓存
     try {
       final cached = await DatabaseHelper.getCachedPage(name);
       if (cached != null && cached.detail != null && cached.detail!.isNotEmpty) {
@@ -180,7 +184,7 @@ class BackendService {
       }
     } catch (_) {}
 
-    // 第4层: 在线拉取
+    // 第2层: 在线拉取
     final page = await _scraper.fetchPage(name);
     try {
       await DatabaseHelper.cachePage(name, page.content, page.tags.join(','));

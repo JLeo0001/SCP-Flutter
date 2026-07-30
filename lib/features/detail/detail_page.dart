@@ -7,6 +7,7 @@ import 'package:webview_flutter/webview_flutter.dart';
 import 'package:url_launcher/url_launcher.dart';
 import '../../core/constants.dart';
 import '../../core/backend/backend_service.dart';
+import '../../core/backend/backend_types.dart';
 import '../../core/services/database_helper.dart';
 import '../../core/services/preference_service.dart';
 import '../../core/utils/chinese_converter.dart';
@@ -134,8 +135,24 @@ class _DetailPageState extends State<DetailPage> with WidgetsBindingObserver {
       } else if (mounted) {
         setState(() => _loading = false);
       }
+    } on OfflinePageNotAvailableException {
+      // 离线库没有此页，清晰提示
+      if (mounted) setState(() => _loading = false);
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('该页面不在离线数据库中，开启联网后可加载'),
+            duration: Duration(seconds: 4),
+          ),
+        );
+      }
     } catch (e) {
       if (mounted) setState(() => _loading = false);
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('加载失败: ${e.toString()}')),
+        );
+      }
     }
     _isLiked = await DatabaseHelper.isLiked(_cleanLink);
     _isRead = await DatabaseHelper.hasRead(_cleanLink);

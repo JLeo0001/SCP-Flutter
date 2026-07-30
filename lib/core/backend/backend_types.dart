@@ -59,3 +59,11 @@ class SyncStatus {
     this.activeJobs = const [],
   });
 }
+
+/// 离线库中不存在此页
+class OfflinePageNotAvailableException implements Exception {
+  final String link;
+  OfflinePageNotAvailableException(this.link);
+  @override
+  String toString() => '离线库中不包含此页面: $link';
+}
