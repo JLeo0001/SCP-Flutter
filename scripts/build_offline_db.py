@@ -385,7 +385,7 @@ class OfflineDbBuilder:
         print(f'\nFTS 索引重建完成: {len(rows)} 条')
 
     def process_page(self, link, meta, conn):
-        """爬取并处理单个页面（最多重试 1 次）"""
+        """爬取并处理单个页面（无重试）"""
         if self.resume:
             existing = conn.execute(
                 'SELECT 1 FROM pages WHERE link=? AND html IS NOT NULL', (link,)
@@ -395,50 +395,41 @@ class OfflineDbBuilder:
                     self.stats['skipped'] += 1
                 return
 
-        for attempt in range(2):  # 最多尝试 2 次（首次 + 1 次重试）
-            try:
-                if attempt == 1:
-                    # 重试前：随机等待 5~12 秒（像人类刷新页面）
-                    backoff = 5 + random.random() * 7
-                    time.sleep(backoff)
+        try:
+            html = fetch_page(link)
+            content = extract_page_content(html)
 
-                html = fetch_page(link)
-                content = extract_page_content(html)
+            if not content:
+                raise ValueError('page-content 为空')
 
-                if not content:
-                    raise ValueError('page-content 为空')
+            raw_bytes = len(content.encode('utf-8'))
+            compressed = gzip.compress(content.encode('utf-8'), compresslevel=6)
+            plain = strip_html(content)
+            text_compressed = gzip.compress(plain.encode('utf-8'), compresslevel=6)
+            tags = extract_tags(html)
 
-                raw_bytes = len(content.encode('utf-8'))
-                compressed = gzip.compress(content.encode('utf-8'), compresslevel=6)
-                plain = strip_html(content)
-                text_compressed = gzip.compress(plain.encode('utf-8'), compresslevel=6)
-                tags = extract_tags(html)
+            with self.lock:
+                conn.execute('''
+                    INSERT OR REPLACE INTO pages
+                    (link, title, scp_type, _index, html, text_content, tags,
+                     uncompressed_size, compressed_size, fetched_at)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ''', (link, meta['title'], meta['scp_type'], meta['_index'],
+                      compressed, text_compressed, tags,
+                      raw_bytes, len(compressed), int(time.time())))
+                self._pending_commits += 1
+                self.stats['fetched'] += 1
+                self.stats['bytes_raw'] += raw_bytes
+                self.stats['bytes_compressed'] += len(compressed)
 
-                with self.lock:
-                    conn.execute('''
-                        INSERT OR REPLACE INTO pages
-                        (link, title, scp_type, _index, html, text_content, tags,
-                         uncompressed_size, compressed_size, fetched_at)
-                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                    ''', (link, meta['title'], meta['scp_type'], meta['_index'],
-                          compressed, text_compressed, tags,
-                          raw_bytes, len(compressed), int(time.time())))
-                    self._pending_commits += 1
-                    self.stats['fetched'] += 1
-                    self.stats['bytes_raw'] += raw_bytes
-                    self.stats['bytes_compressed'] += len(compressed)
+            with self.commit_lock:
+                if self._pending_commits >= 20:
+                    conn.commit()
+                    self._pending_commits = 0
 
-                with self.commit_lock:
-                    if self._pending_commits >= 20:
-                        conn.commit()
-                        self._pending_commits = 0
-                return  # 成功
-
-            except Exception as e:
-                if attempt == 0:
-                    continue  # 重试 1 次
-                with self.lock:
-                    self.stats['failed'] += 1
+        except Exception as e:
+            with self.lock:
+                self.stats['failed'] += 1
 
     def build(self):
         """执行完整构建流程"""
@@ -499,55 +490,6 @@ class OfflineDbBuilder:
             if self._pending_commits > 0:
                 conn.commit()
                 self._pending_commits = 0
-
-        # ═══ 第二轮：重试失败的页面 ═══
-        if self.stats['failed'] > 0:
-            # 找出真正失败的链接
-            all_links_set = set(all_links)
-            existing = self.get_existing_links(conn)
-            failed_links = list(all_links_set - existing)
-            if failed_links:
-                print(f'\n{"="*50}')
-                print(f'第二轮重试: {len(failed_links)} 个失败页面（降速到 2/s）')
-                random.shuffle(failed_links)
-
-                # 降速重试（降低频率避免触发反爬）
-                old_rate = _rate_limiter.rate
-                _rate_limiter.rate = 2
-                old_burst = _rate_limiter.burst
-                _rate_limiter.burst = 1
-
-                retry_failed = self.stats['failed']
-                self.stats['failed'] = 0  # 重置计数
-                total2 = len(failed_links)
-
-                import concurrent.futures
-                with concurrent.futures.ThreadPoolExecutor(
-                        max_workers=min(self.workers, 2)) as executor:
-                    futures = {}
-                    for link in failed_links:
-                        if link in self._page_cache:
-                            future = executor.submit(
-                                self.process_page, link, self._page_cache[link], conn)
-                            futures[future] = link
-
-                    done = 0
-                    for future in concurrent.futures.as_completed(futures):
-                        done += 1
-                        if done % 25 == 0 or done == total2:
-                            print(
-                                f'  重试 [{done}/{total2}] '
-                                f'✓{self.stats["fetched"]} ✗{self.stats["failed"]}',
-                                flush=True)
-
-                # 恢复速率
-                _rate_limiter.rate = old_rate
-                _rate_limiter.burst = old_burst
-
-                with self.commit_lock:
-                    if self._pending_commits > 0:
-                        conn.commit()
-                        self._pending_commits = 0
 
         self.build_fts_index(conn)
 
