@@ -270,8 +270,8 @@ class OfflineDbBuilder:
 
         print(f'\nFTS 索引重建完成: {len(rows)} 条')
 
-    def process_page(self, link, meta, conn):
-        """爬取并处理单个页面"""
+    def process_page(self, link, meta, conn, max_retries=2):
+        """爬取并处理单个页面（失败自动重试 max_retries 次）"""
         if self.resume:
             existing = conn.execute(
                 'SELECT 1 FROM pages WHERE link=? AND html IS NOT NULL',
@@ -282,44 +282,51 @@ class OfflineDbBuilder:
                     self.stats['skipped'] += 1
                 return
 
-        try:
-            time.sleep(self.delay)
-            html = fetch_page(link)
-            content = extract_page_content(html)
+        for attempt in range(max_retries + 1):
+            try:
+                if attempt > 0:
+                    # 重试等待：指数退避 3s, 9s
+                    wait = 3 * (3 ** (attempt - 1))
+                    time.sleep(wait)
 
-            if not content:
+                time.sleep(self.delay)
+                html = fetch_page(link)
+                content = extract_page_content(html)
+
+                if not content:
+                    raise ValueError('page-content 为空')
+
+                raw_bytes = len(content.encode('utf-8'))
+                compressed = gzip.compress(content.encode('utf-8'), compresslevel=6)
+
+                # 纯文本版本（不含标签）
+                plain = strip_html(content)
+                text_compressed = gzip.compress(plain.encode('utf-8'), compresslevel=6)
+
+                tags = extract_tags(html)
+
+                with self.lock:
+                    conn.execute('''
+                        INSERT OR REPLACE INTO pages
+                        (link, title, scp_type, _index, html, text_content, tags,
+                         uncompressed_size, compressed_size, fetched_at)
+                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    ''', (
+                        link, meta['title'], meta['scp_type'], meta['_index'],
+                        compressed, text_compressed, tags,
+                        raw_bytes, len(compressed), int(time.time())
+                    ))
+                    conn.commit()
+                    self.stats['fetched'] += 1
+                    self.stats['bytes_raw'] += raw_bytes
+                    self.stats['bytes_compressed'] += len(compressed)
+                return  # 成功
+
+            except Exception as e:
+                if attempt < max_retries:
+                    continue  # 重试
                 with self.lock:
                     self.stats['failed'] += 1
-                return
-
-            raw_bytes = len(content.encode('utf-8'))
-            compressed = gzip.compress(content.encode('utf-8'), compresslevel=6)
-
-            # 纯文本版本（不含标签）
-            plain = strip_html(content)
-            text_compressed = gzip.compress(plain.encode('utf-8'), compresslevel=6)
-
-            tags = extract_tags(html)
-
-            with self.lock:
-                conn.execute('''
-                    INSERT OR REPLACE INTO pages
-                    (link, title, scp_type, _index, html, text_content, tags,
-                     uncompressed_size, compressed_size, fetched_at)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                ''', (
-                    link, meta['title'], meta['scp_type'], meta['_index'],
-                    compressed, text_compressed, tags,
-                    raw_bytes, len(compressed), int(time.time())
-                ))
-                conn.commit()
-                self.stats['fetched'] += 1
-                self.stats['bytes_raw'] += raw_bytes
-                self.stats['bytes_compressed'] += len(compressed)
-
-        except (HTTPError, URLError, OSError, ValueError) as e:
-            with self.lock:
-                self.stats['failed'] += 1
 
     def build(self):
         """执行完整构建流程"""
