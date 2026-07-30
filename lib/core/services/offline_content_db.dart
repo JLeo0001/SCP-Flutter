@@ -2,7 +2,6 @@ import 'dart:convert';
 import 'dart:io';
 import 'dart:typed_data';
 import 'package:sqflite/sqflite.dart';
-import 'package:path/path.dart' as p;
 import 'package:http/http.dart' as http;
 
 /// 离线内容数据库 — 单文件 offline_content.db
@@ -25,6 +24,12 @@ class OfflineContentDb {
   static String? get dbPath => _dbPath;
   static int? _totalPages;
   static Map<int, int>? _typeCounts;
+
+  /// 启动时自动加载（无文件则静默跳过，不再扫描硬编码路径）
+  static Future<bool> load() async => false;
+
+  /// 从指定路径加载离线数据库
+  static Future<bool> loadFromPath(String filePath) async {
     try {
       final file = File(filePath);
       if (!await file.exists()) {
@@ -78,15 +83,6 @@ class OfflineContentDb {
       return false;
     }
   }
-
-  /// 自动扫描默认路径（仅启动时调用，无文件则静默跳过）
-  static Future<bool> load() async {
-    // 不再扫描硬编码路径，只通过 loadFromPath / download 加载
-    return false;
-  }
-
-  /// 从指定路径加载离线数据库
-  static Future<bool> loadFromPath(String filePath) async {
 
   /// 关闭数据库
   static Future<void> close() async {
@@ -163,17 +159,12 @@ class OfflineContentDb {
   // ═══════════════════════════════════════════
 
   /// FTS5 全文搜索
-  ///
-  /// 返回 [{link, title, snippet, scp_type, _index}]
-  /// snippet 已去除 CJK 分词插入的空格
   static Future<List<Map<String, dynamic>>> fullTextSearch(String query, {int limit = 50}) async {
     if (_db == null || query.trim().isEmpty) return [];
 
     try {
-      // 对查询进行 CJK 分词（与建索引保持一致）
       final tokenized = tokenizeCjk(query.trim());
 
-      // FTS5 搜索，使用 snippet 生成上下文片段
       final rows = await _db!.rawQuery('''
         SELECT p.link, p.title, p.scp_type, p._index,
                snippet(pages_fts, 1, '<b>', '</b>', '…', 40) as snippet
@@ -184,7 +175,6 @@ class OfflineContentDb {
         LIMIT ?
       ''', [tokenized, limit]);
 
-      // 处理结果：去除 snippet 中的 CJK 分词空格
       return rows.map((row) {
         final s = (row['snippet'] as String? ?? '');
         return {
@@ -197,16 +187,14 @@ class OfflineContentDb {
       }).toList();
     } catch (e) {
       print('OfflineContentDb.fullTextSearch error: $e');
-      // FTS5 搜索失败时回退到 LIKE 搜索
       return _fallbackSearch(query, limit: limit);
     }
   }
 
-  /// LIKE 后备搜索（用于 FTS5 语法错误等场景）
+  /// LIKE 后备搜索
   static Future<List<Map<String, dynamic>>> _fallbackSearch(String query, {int limit = 50}) async {
     if (_db == null) return [];
     try {
-      // 先用 title 匹配
       final rows = await _db!.rawQuery('''
         SELECT link, title, scp_type, _index
         FROM pages
@@ -226,7 +214,7 @@ class OfflineContentDb {
     }
   }
 
-  /// 批量获取页面标题（用于搜索建议）
+  /// 标题搜索建议
   static Future<List<Map<String, dynamic>>> searchTitles(String keyword, {int limit = 20}) async {
     if (_db == null) return [];
     try {
@@ -247,9 +235,7 @@ class OfflineContentDb {
   //  资源读取（CSS/JS 模板）
   // ═══════════════════════════════════════════
 
-  /// 从离线库读取 CSS/JS 资源，未找到返回 null
-  ///
-  /// [path] 如 'reader.css', 'reader.js'
+  /// 从离线库读取 CSS/JS 资源
   static Future<String?> getResource(String path) async {
     if (_db == null) return null;
     try {
@@ -313,9 +299,6 @@ class OfflineContentDb {
   // ═══════════════════════════════════════════
 
   /// 从 GitHub Releases 下载离线数据库
-  ///
-  /// [onProgress]: (receivedBytes, totalBytes) → void
-  /// 返回下载到的文件路径，或 null（失败）
   static Future<String?> download({
     required String url,
     required String destPath,
@@ -339,7 +322,6 @@ class OfflineContentDb {
 
       await file.writeAsBytes(bytes);
 
-      // 验证文件
       final ok = await loadFromPath(destPath);
       return ok ? destPath : null;
     } catch (e) {
@@ -358,15 +340,15 @@ class OfflineContentDb {
     return utf8.decode(decompressed);
   }
 
-  /// CJK 分词：在中文/日文/韩文字符间插入空格（与 Python 脚本保持一致）
+  /// CJK 分词
   static String tokenizeCjk(String text) {
     final buf = StringBuffer();
     for (final ch in text.codeUnits) {
-      if ((ch >= 0x4E00 && ch <= 0x9FFF) ||   // CJK Unified
-          (ch >= 0x3400 && ch <= 0x4DBF) ||   // CJK Extension A
-          (ch >= 0xF900 && ch <= 0xFAFF) ||   // CJK Compatibility
-          (ch >= 0x3000 && ch <= 0x303F) ||   // CJK Symbols
-          (ch >= 0xFF00 && ch <= 0xFFEF)) {   // Fullwidth Forms
+      if ((ch >= 0x4E00 && ch <= 0x9FFF) ||
+          (ch >= 0x3400 && ch <= 0x4DBF) ||
+          (ch >= 0xF900 && ch <= 0xFAFF) ||
+          (ch >= 0x3000 && ch <= 0x303F) ||
+          (ch >= 0xFF00 && ch <= 0xFFEF)) {
         buf.write(' ');
         buf.writeCharCode(ch);
         buf.write(' ');
@@ -377,9 +359,10 @@ class OfflineContentDb {
     return buf.toString().trim();
   }
 
-  /// 清理 FTS5 snippet 中的 CJK 分词空格
+  /// 清理 FTS5 snippet 中的 CJK 空格
   static String _cleanSnippet(String snippet) {
-    return snippet.replaceAll(RegExp(r'(?<!\b)<b>|<b>(?!\b)'), '<b>')
+    return snippet
+        .replaceAll(RegExp(r'(?<!\b)<b>|<b>(?!\b)'), '<b>')
         .replaceAll(RegExp(r'(?<!\b)</b>|</b>(?!\b)'), '</b>')
         .replaceAll(RegExp(r'(?<=[^\s]) (?=[^\s<])'), '')
         .trim();
