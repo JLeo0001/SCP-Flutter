@@ -133,7 +133,10 @@ class _RecordListPageState extends State<RecordListPage> {
             onPressed: () {
               setState(() {
                 final allLinks = _records.map((r) => r.link).toSet();
-                _selectedLinks = allLinks.difference(_selectedLinks);
+                final toInvert = allLinks.difference(_selectedLinks);
+                _selectedLinks
+                  ..clear()
+                  ..addAll(toInvert);
               });
             },
             child: const Text('反选', style: TextStyle(fontSize: 13)),

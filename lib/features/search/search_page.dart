@@ -51,7 +51,10 @@ class _SearchPageState extends State<SearchPage> {
 
   Future<void> _search(String keyword) async {
     if (keyword.isEmpty) {
-      setState(() => _results = []);
+      setState(() {
+        _results = [];
+        _searching = false;
+      });
       return;
     }
 
@@ -60,16 +63,18 @@ class _SearchPageState extends State<SearchPage> {
 
     // 优先 FTS5 全文搜索
     if (_useFts) {
-      try {
-        final results = await OfflineContentDb.fullTextSearch(keyword, limit: 50);
-        if (!mounted || id != _searchId) return;
+      // fullTextSearch 内部已兜底，永不抛异常
+      final results = await OfflineContentDb.fullTextSearch(keyword, limit: 50);
+      if (!mounted || id != _searchId) return;
+      if (results.isNotEmpty) {
         setState(() {
           _results = results;
           _isOfflineSearch = true;
           _searching = false;
         });
         return;
-      } catch (_) {}
+      }
+      // 离线库搜不到 — 继续回退到 scp.db 标题搜索
     }
 
     // 后备：标题搜索

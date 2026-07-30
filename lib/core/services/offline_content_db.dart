@@ -167,6 +167,8 @@ class OfflineContentDb {
 
     try {
       final tokenized = tokenizeCjk(query.trim());
+      // 清理 FTS5 MATCH 特殊字符，避免语法错误
+      final sanitized = sanitizeFtsQuery(tokenized);
 
       final rows = await _db!.rawQuery('''
         SELECT p.link, p.title, p.scp_type, p._index,
@@ -176,13 +178,13 @@ class OfflineContentDb {
         WHERE pages_fts MATCH ?
         ORDER BY rank
         LIMIT ?
-      ''', [tokenized, limit]);
+      ''', [sanitized, limit]);
 
       return rows.map((row) {
         final s = (row['snippet'] as String? ?? '');
         return {
           'link': row['link'],
-          'title': (row['title'] as String?)?.replaceAll(' ', '') ?? '',
+          'title': _cleanCjkSpaces(row['title'] as String? ?? ''),
           'snippet': _cleanSnippet(s),
           'scp_type': row['scp_type'],
           '_index': row['_index'],
@@ -228,7 +230,12 @@ class OfflineContentDb {
         ORDER BY _index ASC
         LIMIT ?
       ''', ['%${_escapeLike(keyword)}%', limit]);
-      return rows;
+      return rows.map((r) => {
+        'link': r['link'],
+        'title': _cleanCjkSpaces(r['title'] as String? ?? ''),
+        'scp_type': r['scp_type'],
+        '_index': r['_index'],
+      }).toList();
     } catch (_) {
       return [];
     }
@@ -347,15 +354,11 @@ class OfflineContentDb {
     return utf8.decode(decompressed);
   }
 
-  /// CJK 分词
+  /// CJK 分词 — 在 CJK 字符间插入空格，用于 FTS5 MATCH
   static String tokenizeCjk(String text) {
     final buf = StringBuffer();
     for (final ch in text.codeUnits) {
-      if ((ch >= 0x4E00 && ch <= 0x9FFF) ||
-          (ch >= 0x3400 && ch <= 0x4DBF) ||
-          (ch >= 0xF900 && ch <= 0xFAFF) ||
-          (ch >= 0x3000 && ch <= 0x303F) ||
-          (ch >= 0xFF00 && ch <= 0xFFEF)) {
+      if (_isCjk(ch)) {
         buf.write(' ');
         buf.writeCharCode(ch);
         buf.write(' ');
@@ -366,13 +369,38 @@ class OfflineContentDb {
     return buf.toString().trim();
   }
 
-  /// 清理 FTS5 snippet 中的 CJK 空格
+  /// 清理 FTS5 MATCH 查询中的特殊字符（避免语法错误）
+  static String sanitizeFtsQuery(String query) {
+    // 移除 FTS5 语法字符：* " ( ) + 以及前缀 ^
+    // 保留字母、数字、CJK、空格、-、_（常见于 SCP 编号）
+    return query
+        .replaceAll(RegExp(r'[*"()^+]'), '')
+        .replaceAll(RegExp(r'\s+'), ' ')
+        .trim();
+  }
+
+  /// 清理标题中的 CJK 分词空格（保留英文单词间的正常空格）
+  static String _cleanCjkSpaces(String title) {
+    return title
+        .replaceAll(RegExp(r'([\u4E00-\u9FFF\u3400-\u4DBF\uF900-\uFAFF])\s+'), r'$1')
+        .replaceAll(RegExp(r'\s+([\u4E00-\u9FFF\u3400-\u4DBF\uF900-\uFAFF])'), r'$1');
+  }
+
+  /// 清理 FTS5 snippet 中的 CJK 分词空格和标签间距
   static String _cleanSnippet(String snippet) {
     return snippet
-        .replaceAll(RegExp(r'(?<!\b)<b>|<b>(?!\b)'), '<b>')
-        .replaceAll(RegExp(r'(?<!\b)</b>|</b>(?!\b)'), '</b>')
-        .replaceAll(RegExp(r'(?<=[^\s]) (?=[^\s<])'), '')
+        // 移除紧邻 CJK 字符的空格（分词插入的）
+        .replaceAll(RegExp(r'([\u4E00-\u9FFF\u3400-\u4DBF\uF900-\uFAFF])\s+'), r'$1')
+        .replaceAll(RegExp(r'\s+([\u4E00-\u9FFF\u3400-\u4DBF\uF900-\uFAFF])'), r'$1')
         .trim();
+  }
+
+  static bool _isCjk(int ch) {
+    return (ch >= 0x4E00 && ch <= 0x9FFF) ||
+        (ch >= 0x3400 && ch <= 0x4DBF) ||
+        (ch >= 0xF900 && ch <= 0xFAFF) ||
+        (ch >= 0x3000 && ch <= 0x303F) ||
+        (ch >= 0xFF00 && ch <= 0xFFEF);
   }
 
   /// SQL LIKE 转义
