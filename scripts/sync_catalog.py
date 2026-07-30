@@ -45,7 +45,20 @@ def skip(link):
 
 def infer(link, parent_type=None):
     if link.startswith('/scp-cn-'): return 2
-    if link.startswith('/scp-'): return 1
+    if link.startswith('/scp-'):
+        # 检查是否带特殊后缀
+        suffix_match = re.search(r'/scp-\d+-(j|ex|arc|bus|th|pt|ko|ru|es|fr|pl|de|it|zh|jp|splash)$', link)
+        if suffix_match:
+            suf = suffix_match.group(1)
+            if suf == 'j': return 3
+            if suf == 'ex': return 5
+            if suf in ('th', 'pt', 'ko', 'ru', 'es', 'fr', 'pl', 'de', 'it', 'zh', 'jp'):
+                return 23  # international
+            if suf in ('arc', 'splash'):
+                return 7  # tales
+            if suf == 'bus':
+                return 3  # joke
+        return 1  # 标准 SCP
     if link.startswith('/tale:'): return 7
     if link.startswith('/wanderers:'): return 21
     if link.startswith('/fragment:'): return None
@@ -73,12 +86,15 @@ def infer(link, parent_type=None):
     return 7
 
 def _extract_scp_index(link, scp_type):
-    """从链接提取SCP编号作为_index，仅用于类型1和2"""
+    """从链接提取SCP编号作为_index，仅用于纯数字编号的类型1和2
+    
+    要求 /scp- 后紧跟数字直到路径结束（排除 /scp-7bus、/scp-999-ex 等）
+    """
     if scp_type == 1:
-        m = re.match(r'/scp-(\d+)', link)
+        m = re.match(r'/scp-(\d+)$', link)
         if m: return int(m.group(1))
     elif scp_type == 2:
-        m = re.match(r'/scp-cn-(\d+)', link)
+        m = re.match(r'/scp-cn-(\d+)$', link)
         if m: return int(m.group(1))
     return None
 
