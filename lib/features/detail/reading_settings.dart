@@ -275,17 +275,17 @@ class _ReadingSettingsPanelState extends State<ReadingSettingsPanel> {
               selected: _fontFamily == 0,
               onSelected: (_) => setState(() { _fontFamily = 0; _saveVisual(); }),
             ),
-            ..._customFontNames.asMap().entries.map((e) => ChoiceChip(
-              label: Text(e.value, style: const TextStyle(fontSize: 13)),
-              selected: _fontFamily == 1 + e.key,
-              onSelected: (_) => setState(() { _fontFamily = 1 + e.key; _saveVisual(); }),
-            )),
             ActionChip(
               avatar: const Icon(Icons.folder_open, size: 16),
               label: Text('扫描', style: TextStyle(fontSize: 12, color: cs.primary)),
               onPressed: _scanFonts,
             ),
           ]),
+          // 自定义字体列表（可折叠）
+          if (_customFontNames.length > 6)
+            _buildCollapsibleFonts(cs)
+          else
+            ...List.generate(_customFontNames.length, (i) => _fontChip(i, cs)),
           _sectionTitle('行高', cs),
           Row(children: [
             Expanded(child: Slider(
@@ -462,6 +462,37 @@ class _ReadingSettingsPanelState extends State<ReadingSettingsPanel> {
     return Padding(
       padding: const EdgeInsets.only(top: 10, bottom: 6),
       child: Text(text, style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600, color: cs.onSurface.withValues(alpha: 0.6))),
+    );
+  }
+
+  /// 单个字体 chip
+  Widget _fontChip(int index, ColorScheme cs) {
+    final active = _fontFamily == 1 + index;
+    return Padding(
+      padding: const EdgeInsets.only(right: 8, bottom: 4),
+      child: ChoiceChip(
+        label: Text(_customFontNames[index], style: const TextStyle(fontSize: 13)),
+        selected: active,
+        selectedColor: cs.primaryContainer,
+        onSelected: (_) => setState(() { _fontFamily = 1 + index; _saveVisual(); }),
+      ),
+    );
+  }
+
+  /// 可折叠的字体列表（超过6个时）
+  Widget _buildCollapsibleFonts(ColorScheme cs) {
+    return ExpansionTile(
+      tilePadding: EdgeInsets.zero,
+      title: Text('自定义字体 (${_customFontNames.length}个)',
+          style: TextStyle(fontSize: 13, color: cs.primary)),
+      childrenPadding: const EdgeInsets.only(top: 4),
+      children: [
+        Wrap(
+          spacing: 8,
+          runSpacing: 4,
+          children: List.generate(_customFontNames.length, (i) => _fontChip(i, cs)),
+        ),
+      ],
     );
   }
 }
