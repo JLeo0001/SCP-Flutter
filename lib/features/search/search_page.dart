@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import '../../core/services/database_helper.dart';
 import '../../core/services/offline_content_db.dart';
@@ -20,6 +22,9 @@ class _SearchPageState extends State<SearchPage> {
   bool _isOfflineSearch = false;
   bool _useFts = false;
 
+  Timer? _debounce;
+  int _searchId = 0;
+
   @override
   void initState() {
     super.initState();
@@ -32,8 +37,16 @@ class _SearchPageState extends State<SearchPage> {
 
   @override
   void dispose() {
+    _debounce?.cancel();
     _searchController.dispose();
     super.dispose();
+  }
+
+  void _onSearchChanged(String keyword) {
+    _debounce?.cancel();
+    _debounce = Timer(const Duration(milliseconds: 300), () {
+      _search(keyword);
+    });
   }
 
   Future<void> _search(String keyword) async {
@@ -41,19 +54,20 @@ class _SearchPageState extends State<SearchPage> {
       setState(() => _results = []);
       return;
     }
+
+    final id = ++_searchId;
     setState(() => _searching = true);
 
     // 优先 FTS5 全文搜索
     if (_useFts) {
       try {
         final results = await OfflineContentDb.fullTextSearch(keyword, limit: 50);
-        if (mounted) {
-          setState(() {
-            _results = results;
-            _isOfflineSearch = true;
-            _searching = false;
-          });
-        }
+        if (!mounted || id != _searchId) return;
+        setState(() {
+          _results = results;
+          _isOfflineSearch = true;
+          _searching = false;
+        });
         return;
       } catch (_) {}
     }
@@ -61,21 +75,20 @@ class _SearchPageState extends State<SearchPage> {
     // 后备：标题搜索
     try {
       final items = await DatabaseHelper.searchScpByTitle(keyword);
-      if (mounted) {
-        setState(() {
-          _results = items.take(50).map((s) => <String, dynamic>{
-            'link': s.link,
-            'title': s.title,
-            'snippet': '',
-            'scp_type': s.scpType,
-            '_index': s.index,
-          }).toList();
-          _isOfflineSearch = false;
-          _searching = false;
-        });
-      }
+      if (!mounted || id != _searchId) return;
+      setState(() {
+        _results = items.take(50).map((s) => <String, dynamic>{
+          'link': s.link,
+          'title': s.title,
+          'snippet': '',
+          'scp_type': s.scpType,
+          '_index': s.index,
+        }).toList();
+        _isOfflineSearch = false;
+        _searching = false;
+      });
     } catch (_) {
-      if (mounted) setState(() => _searching = false);
+      if (mounted && id == _searchId) setState(() => _searching = false);
     }
   }
 
@@ -106,7 +119,7 @@ class _SearchPageState extends State<SearchPage> {
             hintStyle: TextStyle(color: cs.onSurface.withValues(alpha: 0.4)),
           ),
           style: TextStyle(color: cs.onSurface),
-          onChanged: _search,
+          onChanged: _onSearchChanged,
         ),
       ),
       body: _searching
