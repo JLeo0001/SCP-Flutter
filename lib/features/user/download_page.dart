@@ -196,9 +196,8 @@ class _DownloadPageState extends State<DownloadPage> {
     try {
       // 使用系统文件选择器（SAF），无需存储权限
       final result = await FilePicker.platform.pickFiles(
-        type: FileType.custom,
-        allowedExtensions: ['db'],
-        dialogTitle: '选择 offline_content.db',
+        type: FileType.any,
+        dialogTitle: '选择 offline_content.db 离线数据库',
       );
 
       if (result == null || result.files.isEmpty) return;
