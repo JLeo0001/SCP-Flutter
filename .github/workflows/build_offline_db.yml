@@ -93,20 +93,21 @@ jobs:
           tag_name: offline-db-${{ github.run_number }}
           name: "离线数据库 v${{ github.run_number }}"
           body: |
-            ## 离线内容数据库自动构建
+            ## 离线内容数据库自动构建 v${{ github.run_number }}
             
             - 构建时间: ${{ github.event.repository.updated_at }}
             - 运行号: ${{ github.run_number }}
-            - 工作流: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
             
             ### 使用方式
             1. 下载 `offline_content.db`
-            2. 放入手机 `/sdcard/Documents/RikkaHub/` 或 `/sdcard/SCP/` 目录
-            3. 在 App 内「文档缓存」页选择「选择文件」加载
+            2. 打开 App →「我的」→「文档缓存」
+            3. 点击「选择文件」，在文件管理器中找到并选中下载的 `.db` 文件
+            4. App 自动导入并加载，之后每次启动自动恢复
             
-            ### 注意
-            该数据库包含所有页面的压缩内容 + FTS5 全文索引。
-            在 App 中加载后即可离线阅读和全文搜索。
+            ### 文件说明
+            - 只含文字内容，不含图片/视频
+            - gzip 压缩存储，支持 FTS5 全文搜索
+            - 内含 CSS/JS 阅读模板
           files: offline_content.db
           make_latest: true
           fail_on_unmatched_files: false

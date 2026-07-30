@@ -94,12 +94,12 @@ class _DetailPageState extends State<DetailPage> with WidgetsBindingObserver {
     return false;
   }
 
-  /// HTML安全的简繁转换 — 只转换标签外文本，自动检测是否为繁体
-  String _htmlSafeConvert(String html) {
-    // 先检测是否已经是繁体
-    if (_isTraditionalText(html)) {
-      return html; // 已经是繁体，跳过转换
-    }
+  /// HTML安全的简繁转换 — 只转换标签外文本，不破坏HTML结构
+  /// [toTraditional]: true=简→繁, false=繁→简
+  String _htmlSafeConvert(String html, {required bool toTraditional}) {
+    final converter = toTraditional
+        ? ChineseConverter.toTraditional
+        : ChineseConverter.toSimplified;
     final buf = StringBuffer();
     int i = 0;
     while (i < html.length) {
@@ -113,7 +113,7 @@ class _DetailPageState extends State<DetailPage> with WidgetsBindingObserver {
         // 文本内容转换
         int j = html.indexOf('<', i);
         if (j == -1) j = html.length;
-        buf.write(ChineseConverter.toTraditional(html.substring(i, j)));
+        buf.write(converter(html.substring(i, j)));
         i = j;
       }
     }
@@ -163,8 +163,15 @@ class _DetailPageState extends State<DetailPage> with WidgetsBindingObserver {
         '');
 
     // 简繁切换：仅转换标签外文本，避免破坏HTML
-    if (PreferenceService.getHanzType() == 1) {
-      content = _htmlSafeConvert(content);
+    final hanzType = PreferenceService.getHanzType();
+    if (hanzType == 1) {
+      // 用户选择繁体 → 简→繁转换（若已是繁体则是空操作）
+      content = _htmlSafeConvert(content, toTraditional: true);
+    } else {
+      // 用户选择简体，但文档本身是繁体 → 繁→简转换
+      if (_isTraditionalText(content)) {
+        content = _htmlSafeConvert(content, toTraditional: false);
+      }
     }
 
     String imgCss = showImg ? '' : 'img, video, iframe, canvas { display: none !important; }';
