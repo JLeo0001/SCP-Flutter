@@ -122,7 +122,7 @@
 | **框架** | Flutter 3.27 · Dart 3.6+ |
 | **设计** | Material Design 3 · 动态取色 |
 | **WebView** | webview_flutter · JS交互 · CSS注入 |
-| **数据库** | sqflite · 预置25k+条目目录 |
+| **数据库** | sqflite · 预置25k+条目目录 · 离线全文库(gzip+FTS5) |
 | **网络** | http · 直连Wikidot爬取 |
 | **存储** | SharedPreferences · 文件存储 |
 | **CI/CD** | GitHub Actions · 三架构APK构建 |
@@ -136,12 +136,22 @@ assets/scp.db (预置, ~1.7MB)
   └─ scps 表 → 25,000+ 条条目目录
 
 scp_data.db (运行时创建)
-  ├─ page_cache     → HTML 内容缓存
-  ├─ likes          → 收藏/已读
-  ├─ records        → 历史/待读
-  ├─ drafts         → 草稿
-  └─ reading_positions → 阅读位置
+  ├─ page_cache         → HTML 内容缓存
+  ├─ likes              → 收藏/已读
+  ├─ records            → 历史/待读
+  ├─ drafts             → 草稿
+  └─ reading_positions  → 阅读位置
+
+offline_content.db (可选下载, ~200-300MB)
+  ├─ pages              → 正文 HTML (gzip压缩)
+  ├─ pages_fts          → FTS5 全文索引
+  ├─ resources          → CSS/JS 阅读模板
+  └─ build_meta         → 构建信息
 ```
+
+> **离线内容库**：从 GitHub Releases 下载，含全部页面的压缩正文 + FTS5 全文搜索。
+> 每周自动构建，App 内一键下载/导入，启动自动恢复。
+> 不含图片，gzip 压缩比约 25%，支持离线阅读和全文搜索。
 
 ---
 
