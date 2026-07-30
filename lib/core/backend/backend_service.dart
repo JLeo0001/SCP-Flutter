@@ -180,24 +180,6 @@ class BackendService {
       }
     } catch (_) {}
 
-    // 第3层: 离线内容库（如果 preferOffline=false，离线库作为后备）
-    if (isOfflineAvailable && !preferOffline) {
-      try {
-        final html = await OfflineContentDb.getPageHtml(name);
-        if (html != null && html.isNotEmpty) {
-          final info = await OfflineContentDb.getPageInfo(name);
-          return PageData(
-            link: name,
-            title: info?['title'] as String? ?? '',
-            content: html,
-            tags: (info?['tags'] as String? ?? '').split(',')
-                .where((t) => t.isNotEmpty).toList(),
-            html: html,
-          );
-        }
-      } catch (_) {}
-    }
-
     // 第4层: 在线拉取
     final page = await _scraper.fetchPage(name);
     try {
