@@ -1,5 +1,6 @@
 import 'dart:io';
 import 'package:flutter/material.dart';
+import 'package:file_picker/file_picker.dart';
 import 'package:path_provider/path_provider.dart';
 import '../../core/backend/backend_service.dart';
 import '../../core/services/database_helper.dart';
@@ -192,35 +193,56 @@ class _DownloadPageState extends State<DownloadPage> {
   }
 
   Future<void> _importOfflineDb() async {
-    // 尝试常见路径
-    final candidates = [
-      '/sdcard/Documents/RikkaHub/offline_content.db',
-      '/sdcard/SCP/offline_content.db',
-      '/storage/emulated/0/Download/offline_content.db',
-    ];
-
-    for (final path in candidates) {
-      if (await File(path).exists()) {
-        final loaded = await _backend.loadOfflineDb(path);
-        if (loaded && mounted) {
-          setState(() {
-            _offlineLoaded = true;
-            _offlinePages = OfflineContentDb.totalPages;
-            _offlineSize = OfflineContentDb.dbFileSize as int?;
-            _offlineMsg = '✅ 已加载: $path';
-          });
-          return;
-        }
-      }
-    }
-
-    // 用户手动选择（通过文件选择器 — 简化为提示）
-    if (mounted) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text(
-          '将 offline_content.db 放入 /sdcard/Documents/RikkaHub/ 目录后点击此按钮'
-        )),
+    try {
+      // 使用系统文件选择器（SAF），无需存储权限
+      final result = await FilePicker.platform.pickFiles(
+        type: FileType.custom,
+        allowedExtensions: ['db'],
+        dialogTitle: '选择 offline_content.db',
       );
+
+      if (result == null || result.files.isEmpty) return;
+      final filePath = result.files.single.path;
+      if (filePath == null || !await File(filePath).exists()) {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: Text('无法读取所选文件')),
+          );
+        }
+        return;
+      }
+
+      setState(() => _offlineMsg = '正在导入...');
+
+      // 复制到应用私有目录（确保可读）
+      final docDir = await getApplicationDocumentsDirectory();
+      final destPath = '${docDir.path}/offline_content.db';
+
+      // 如果目标已存在，先删除
+      final destFile = File(destPath);
+      if (await destFile.exists()) {
+        await destFile.delete();
+      }
+
+      // 复制文件
+      await File(filePath).copy(destPath);
+
+      // 加载
+      final loaded = await _backend.loadOfflineDb(destPath);
+      if (loaded && mounted) {
+        setState(() {
+          _offlineLoaded = true;
+          _offlinePages = OfflineContentDb.totalPages;
+          _offlineSize = OfflineContentDb.dbFileSize as int?;
+          _offlineMsg = '✅ 已加载: $filePath';
+        });
+      } else if (mounted) {
+        setState(() => _offlineMsg = '❌ 文件格式不正确，请选择有效的离线数据库');
+      }
+    } catch (e) {
+      if (mounted) {
+        setState(() => _offlineMsg = '❌ 导入失败: $e');
+      }
     }
   }
 
