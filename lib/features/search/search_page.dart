@@ -1,11 +1,11 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
-import '../../core/services/database_helper.dart';
-import '../../core/services/offline_content_db.dart';
+import '../../core/backend/backend_service.dart';
+import '../../core/services/preference_service.dart';
 import '../detail/detail_page.dart';
 
-/// 搜索页 — 支持离线 FTS5 全文搜索 + 标题搜索
+/// 搜索页 — 通过 BackendService 统一路由（离线FTS5 / 标题搜索）
 class SearchPage extends StatefulWidget {
   final String initialKeyword;
 
@@ -16,11 +16,11 @@ class SearchPage extends StatefulWidget {
 }
 
 class _SearchPageState extends State<SearchPage> {
+  final _backend = BackendService.instance;
   late final TextEditingController _searchController;
   List<Map<String, dynamic>> _results = [];
   bool _searching = false;
   bool _isOfflineSearch = false;
-  bool _useFts = false;
 
   Timer? _debounce;
   int _searchId = 0;
@@ -29,7 +29,6 @@ class _SearchPageState extends State<SearchPage> {
   void initState() {
     super.initState();
     _searchController = TextEditingController(text: widget.initialKeyword);
-    _useFts = OfflineContentDb.isLoaded;
     if (widget.initialKeyword.isNotEmpty) {
       _search(widget.initialKeyword);
     }
@@ -61,41 +60,23 @@ class _SearchPageState extends State<SearchPage> {
     final id = ++_searchId;
     setState(() => _searching = true);
 
-    // 优先 FTS5 全文搜索
-    if (_useFts) {
-      // fullTextSearch 内部已兜底，永不抛异常
-      final results = await OfflineContentDb.fullTextSearch(keyword, limit: 50);
-      if (!mounted || id != _searchId) return;
-      if (results.isNotEmpty) {
-        setState(() {
-          _results = results;
-          _isOfflineSearch = true;
-          _searching = false;
-        });
-        return;
-      }
-      // 离线库搜不到 — 继续回退到 scp.db 标题搜索
-    }
-
-    // 后备：标题搜索
     try {
-      final items = await DatabaseHelper.searchScpByTitle(keyword);
+      final results = await _backend.search(keyword, limit: 50);
       if (!mounted || id != _searchId) return;
       setState(() {
-        _results = items.take(50).map((s) => <String, dynamic>{
-          'link': s.link,
-          'title': s.title,
-          'snippet': '',
-          'scp_type': s.scpType,
-          '_index': s.index,
-        }).toList();
-        _isOfflineSearch = false;
+        _results = results;
+        // 有 snippet 说明走了 FTS5 全文搜索
+        _isOfflineSearch = results.any((r) =>
+            (r['snippet'] as String? ?? '').isNotEmpty);
         _searching = false;
       });
     } catch (_) {
       if (mounted && id == _searchId) setState(() => _searching = false);
     }
   }
+
+  bool get _canFts => _backend.isOfflineAvailable &&
+      PreferenceService.getPreferOffline();
 
   IconData _typeIcon(int? scpType) {
     return switch (scpType) {
@@ -119,7 +100,7 @@ class _SearchPageState extends State<SearchPage> {
           controller: _searchController,
           autofocus: true,
           decoration: InputDecoration(
-            hintText: _useFts ? '全文搜索SCP文档...' : '搜索SCP标题...',
+            hintText: _canFts ? '全文搜索SCP文档...' : '搜索SCP标题...',
             border: InputBorder.none,
             hintStyle: TextStyle(color: cs.onSurface.withValues(alpha: 0.4)),
           ),
@@ -138,7 +119,7 @@ class _SearchPageState extends State<SearchPage> {
                           color: cs.onSurface.withValues(alpha: 0.15)),
                       const SizedBox(height: 16),
                       Text(
-                        _useFts
+                        _canFts
                             ? '输入关键词搜索文档全文'
                             : '输入关键词搜索SCP标题\n(加载离线数据库后可搜索全文)',
                         textAlign: TextAlign.center,

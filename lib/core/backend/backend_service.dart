@@ -167,7 +167,18 @@ class BackendService {
           }
         } catch (_) {}
       }
-      // 离线库没有此页 — 不走网络，直接报告
+      // 离线库没有 — 试一下缓存再放弃
+      try {
+        final cached = await DatabaseHelper.getCachedPage(name);
+        if (cached != null && cached.detail != null && cached.detail!.isNotEmpty) {
+          return PageData(
+            link: name, title: '', content: cached.detail!,
+            tags: (cached.tags ?? '').split(',').where((t) => t.isNotEmpty).toList(),
+            html: cached.detail!,
+          );
+        }
+      } catch (_) {}
+      // 离线 & 缓存都没有
       throw OfflinePageNotAvailableException(name);
     }
 
@@ -247,8 +258,10 @@ class BackendService {
   /// 返回增强搜索结果 [{link, title, snippet, scp_type}]
   /// 比 PageRef 多带 snippet 和类型信息
   Future<List<Map<String, dynamic>>> search(String keyword, {int limit = 30}) async {
-    // 第1层: 离线 FTS5 全文搜索
-    if (isOfflineAvailable) {
+    final preferOffline = PreferenceService.getPreferOffline();
+
+    // 第1层: 离线 FTS5 全文搜索（仅开关开启时）
+    if (preferOffline && isOfflineAvailable) {
       try {
         return await OfflineContentDb.fullTextSearch(keyword, limit: limit);
       } catch (_) {}
@@ -271,7 +284,9 @@ class BackendService {
 
   /// 搜索建议（仅标题匹配，速度快）
   Future<List<Map<String, dynamic>>> searchSuggestions(String keyword, {int limit = 10}) async {
-    if (isOfflineAvailable) {
+    final preferOffline = PreferenceService.getPreferOffline();
+
+    if (preferOffline && isOfflineAvailable) {
       try {
         return await OfflineContentDb.searchTitles(keyword, limit: limit);
       } catch (_) {}
