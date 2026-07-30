@@ -47,55 +47,23 @@ class WikidotClient {
         'Pragma': 'no-cache',
       };
 
-  /// 可用代理列表
-  static const List<String> _proxies = [
-    'ghproxy.homeboyc.cn',
-    'github.tbap.top',
-  ];
-
   String _pageUrl(String path) {
     final name = path.startsWith('/') ? path.substring(1) : path;
     return 'https://$_domain/$name';
-  }
-
-  /// 构造代理 URL：代理服务器镜像 Scp-Wiki 页面
-  String _proxyUrl(String path, String proxyHost) {
-    final name = path.startsWith('/') ? path.substring(1) : path;
-    return 'https://$proxyHost/https://$_domain/$name';
   }
 
   // ═════════════════════════════════════════════════════════
   //  核心获取方法
   // ═════════════════════════════════════════════════════════
 
-  /// 获取页面 HTML
-  ///
-  /// 策略：直连 HTTPS → 依次尝试各代理
-  /// 每次请求间隔 ≥ 1.5s
+  /// 获取页面 HTML — 直连 Wikidot
   /// 有效页面必须包含 <html> 标签（排除 Cloudflare 拦截页）
   Future<String> fetchRawPage(String path) async {
     await _rateLimit();
-    final errors = <String>[];
-
-    // 尝试直连
-    final directUrl = _pageUrl(path);
-    for (final tryDirect in [true, false]) {
-      if (tryDirect) {
-        final result = await _tryFetch(directUrl, _headers, 15);
-        if (result != null) return result;
-        errors.add('直连失败');
-      } else {
-        // 依次尝试各代理
-        for (final proxy in _proxies) {
-          final proxyUrl = _proxyUrl(path, proxy);
-          final result = await _tryFetch(proxyUrl, _headers, 20);
-          if (result != null) return result;
-          errors.add('代理 $proxy 失败');
-        }
-      }
-    }
-
-    throw Exception('无法连接 Wikidot (${errors.join(", ")}): $path');
+    final url = _pageUrl(path);
+    final result = await _tryFetch(url, _headers, 20);
+    if (result != null) return result;
+    throw Exception('无法连接 Wikidot，请检查网络: $path');
   }
 
   /// 尝试一次 HTTP GET
