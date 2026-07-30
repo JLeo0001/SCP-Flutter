@@ -135,22 +135,13 @@ class _DetailPageState extends State<DetailPage> with WidgetsBindingObserver {
       } else if (mounted) {
         setState(() => _loading = false);
       }
-    } on OfflinePageNotAvailableException {
-      // 离线库没有此页，清晰提示
-      if (mounted) setState(() => _loading = false);
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text('该页面不在离线数据库中，开启联网后可加载'),
-            duration: Duration(seconds: 4),
-          ),
-        );
-      }
     } catch (e) {
       if (mounted) setState(() => _loading = false);
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('加载失败: ${e.toString()}')),
+          SnackBar(content: Text(e is OfflinePageNotAvailableException
+              ? '该页面不在离线数据库中'
+              : '加载失败: $e')),
         );
       }
     }

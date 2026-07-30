@@ -142,48 +142,32 @@ class BackendService {
   }
 
   // ═══════════════════════════════════════════
-  //  页面内容 — 三层数据流
+  //  页面内容 — 数据流
   // ═══════════════════════════════════════════
 
   Future<PageData> getPage(String link) async {
     final name = link.startsWith('/') ? link.substring(1) : link;
     final preferOffline = PreferenceService.getPreferOffline();
 
-    // ═══ 模式A: 优先离线 ═══
-    if (preferOffline) {
-      if (isOfflineAvailable) {
-        try {
-          final html = await OfflineContentDb.getPageHtml(name);
-          if (html != null && html.isNotEmpty) {
-            final info = await OfflineContentDb.getPageInfo(name);
-            return PageData(
-              link: name,
-              title: info?['title'] as String? ?? '',
-              content: html,
-              tags: (info?['tags'] as String? ?? '').split(',')
-                  .where((t) => t.isNotEmpty).toList(),
-              html: html,
-            );
-          }
-        } catch (_) {}
-      }
-      // 离线库没有 — 试一下缓存再放弃
+    // ═══ 第1层: 离线库（仅开关ON时）═══
+    if (preferOffline && isOfflineAvailable) {
       try {
-        final cached = await DatabaseHelper.getCachedPage(name);
-        if (cached != null && cached.detail != null && cached.detail!.isNotEmpty) {
+        final html = await OfflineContentDb.getPageHtml(name);
+        if (html != null && html.isNotEmpty) {
+          final info = await OfflineContentDb.getPageInfo(name);
           return PageData(
-            link: name, title: '', content: cached.detail!,
-            tags: (cached.tags ?? '').split(',').where((t) => t.isNotEmpty).toList(),
-            html: cached.detail!,
+            link: name,
+            title: info?['title'] as String? ?? '',
+            content: html,
+            tags: (info?['tags'] as String? ?? '').split(',')
+                .where((t) => t.isNotEmpty).toList(),
+            html: html,
           );
         }
       } catch (_) {}
-      // 离线 & 缓存都没有
-      throw OfflinePageNotAvailableException(name);
     }
 
-    // ═══ 模式B: 不优先离线 ═══
-    // 第1层: 运行时缓存
+    // ═══ 第2层: 运行时缓存 ═══
     try {
       final cached = await DatabaseHelper.getCachedPage(name);
       if (cached != null && cached.detail != null && cached.detail!.isNotEmpty) {
@@ -195,7 +179,7 @@ class BackendService {
       }
     } catch (_) {}
 
-    // 第2层: 在线拉取
+    // ═══ 第3层: 在线拉取（最终通路）═══
     final page = await _scraper.fetchPage(name);
     try {
       await DatabaseHelper.cachePage(name, page.content, page.tags.join(','));
