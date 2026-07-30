@@ -156,6 +156,8 @@ class _DownloadPageState extends State<DownloadPage> {
       );
 
       if (path != null && mounted) {
+        // 同步 BackendService 的 _offlineLoaded 标志
+        await _backend.loadOfflineDb(destPath);
         final size = await OfflineContentDb.dbFileSize;
         if (mounted) {
           setState(() {

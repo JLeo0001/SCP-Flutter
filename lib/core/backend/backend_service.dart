@@ -151,7 +151,7 @@ class BackendService {
 
     // 第1层: 离线内容库（gzip 压缩，读取即解压）
     // 如果 preferOffline=true（默认），始终优先用离线数据
-    if (_offlineLoaded && preferOffline) {
+    if (isOfflineAvailable && preferOffline) {
       try {
         final html = await OfflineContentDb.getPageHtml(name);
         if (html != null && html.isNotEmpty) {
@@ -181,7 +181,7 @@ class BackendService {
     } catch (_) {}
 
     // 第3层: 离线内容库（如果 preferOffline=false，离线库作为后备）
-    if (_offlineLoaded && !preferOffline) {
+    if (isOfflineAvailable && !preferOffline) {
       try {
         final html = await OfflineContentDb.getPageHtml(name);
         if (html != null && html.isNotEmpty) {
@@ -262,7 +262,7 @@ class BackendService {
   /// 比 PageRef 多带 snippet 和类型信息
   Future<List<Map<String, dynamic>>> search(String keyword, {int limit = 30}) async {
     // 第1层: 离线 FTS5 全文搜索
-    if (_offlineLoaded) {
+    if (isOfflineAvailable) {
       try {
         return await OfflineContentDb.fullTextSearch(keyword, limit: limit);
       } catch (_) {}
@@ -285,7 +285,7 @@ class BackendService {
 
   /// 搜索建议（仅标题匹配，速度快）
   Future<List<Map<String, dynamic>>> searchSuggestions(String keyword, {int limit = 10}) async {
-    if (_offlineLoaded) {
+    if (isOfflineAvailable) {
       try {
         return await OfflineContentDb.searchTitles(keyword, limit: limit);
       } catch (_) {}
