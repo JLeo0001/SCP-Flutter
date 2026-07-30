@@ -172,7 +172,7 @@ class _DownloadPageState extends State<DownloadPage> {
           _offlineMsg = '✅ 下载并加载成功！';
           _offlineLoaded = true;
           _offlinePages = OfflineContentDb.totalPages;
-          _offlineSize = OfflineContentDb.dbFileSize as int?;
+          _offlineSize = await OfflineContentDb.dbFileSize;
           // 通知 BackendService
           _backend.loadOfflineDb(path);
         });
@@ -232,7 +232,7 @@ class _DownloadPageState extends State<DownloadPage> {
         setState(() {
           _offlineLoaded = true;
           _offlinePages = OfflineContentDb.totalPages;
-          _offlineSize = OfflineContentDb.dbFileSize as int?;
+          _offlineSize = await OfflineContentDb.dbFileSize;
           _offlineMsg = '✅ 已加载: $filePath';
         });
       } else if (mounted) {
