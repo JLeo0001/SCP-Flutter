@@ -5,6 +5,7 @@ import 'package:path_provider/path_provider.dart';
 import '../../core/backend/backend_service.dart';
 import '../../core/services/database_helper.dart';
 import '../../core/services/offline_content_db.dart';
+import '../../core/services/preference_service.dart';
 import '../../core/services/category_map.dart' show typeNames;
 
 /// 下载/数据管理页 — 离线内容库管理
@@ -285,6 +286,20 @@ class _DownloadPageState extends State<DownloadPage> {
                             style: TextStyle(fontSize: 11, color: cs.onSurface.withValues(alpha: 0.5)))),
                   ],
                   const SizedBox(height: 16),
+                  // ═══ 优先离线开关 ═══
+                  SwitchListTile(
+                    dense: true,
+                    contentPadding: EdgeInsets.zero,
+                    title: const Text('联网时优先使用离线数据', style: TextStyle(fontSize: 14)),
+                    subtitle: Text('开启后阅读文档优先加载离线内容，省流量加速',
+                        style: TextStyle(fontSize: 11,
+                            color: cs.onSurface.withValues(alpha: 0.5))),
+                    value: PreferenceService.getPreferOffline(),
+                    onChanged: (v) {
+                      PreferenceService.setPreferOffline(v);
+                      setState(() {});
+                    },
+                  ),
                   if (_isDownloading)
                     Column(children: [
                       LinearProgressIndicator(value: _downloadProgress),

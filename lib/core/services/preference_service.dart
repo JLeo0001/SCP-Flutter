@@ -153,4 +153,12 @@ class PreferenceService {
 
   static bool getShowMeal() => _prefs.getBool('show_meal') ?? false;
   static void setShowMeal(bool v) => _prefs.setBool('show_meal', v);
+
+  // ═══════════════════════════════════════
+  //  离线数据优先
+  // ═══════════════════════════════════════
+
+  /// 联网状态下优先使用离线数据（省流量、更快）
+  static bool getPreferOffline() => _prefs.getBool('prefer_offline') ?? true;
+  static void setPreferOffline(bool v) => _prefs.setBool('prefer_offline', v);
 }

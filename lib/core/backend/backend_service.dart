@@ -1,6 +1,7 @@
 import 'dart:math';
 import '../services/database_helper.dart';
 import '../services/offline_content_db.dart';
+import '../services/preference_service.dart';
 import 'scraper.dart';
 import 'backend_types.dart';
 
@@ -146,9 +147,11 @@ class BackendService {
 
   Future<PageData> getPage(String link) async {
     final name = link.startsWith('/') ? link.substring(1) : link;
+    final preferOffline = PreferenceService.getPreferOffline();
 
     // 第1层: 离线内容库（gzip 压缩，读取即解压）
-    if (_offlineLoaded) {
+    // 如果 preferOffline=true（默认），始终优先用离线数据
+    if (_offlineLoaded && preferOffline) {
       try {
         final html = await OfflineContentDb.getPageHtml(name);
         if (html != null && html.isNotEmpty) {
@@ -177,7 +180,25 @@ class BackendService {
       }
     } catch (_) {}
 
-    // 第3层: 在线拉取
+    // 第3层: 离线内容库（如果 preferOffline=false，离线库作为后备）
+    if (_offlineLoaded && !preferOffline) {
+      try {
+        final html = await OfflineContentDb.getPageHtml(name);
+        if (html != null && html.isNotEmpty) {
+          final info = await OfflineContentDb.getPageInfo(name);
+          return PageData(
+            link: name,
+            title: info?['title'] as String? ?? '',
+            content: html,
+            tags: (info?['tags'] as String? ?? '').split(',')
+                .where((t) => t.isNotEmpty).toList(),
+            html: html,
+          );
+        }
+      } catch (_) {}
+    }
+
+    // 第4层: 在线拉取
     final page = await _scraper.fetchPage(name);
     try {
       await DatabaseHelper.cachePage(name, page.content, page.tags.join(','));

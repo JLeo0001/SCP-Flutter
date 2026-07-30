@@ -309,6 +309,10 @@ class OfflineContentDb {
   }) async {
     try {
       final file = File(destPath);
+      // 覆盖旧文件
+      if (await file.exists()) {
+        await file.delete();
+      }
       await file.parent.create(recursive: true);
 
       final request = http.Request('GET', Uri.parse(url));
