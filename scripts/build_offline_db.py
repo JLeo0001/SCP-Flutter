@@ -103,7 +103,7 @@ def make_headers():
         'User-Agent': random.choice(USER_AGENTS),
         'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
         'Accept-Language': f'zh-CN,zh;q=0.{lang_weight},en;q=0.5',
-        'Accept-Encoding': 'gzip, deflate',
+        # 不设置 Accept-Encoding，urllib 自动处理压缩
         'Referer': random.choice(REFERERS),
         'Connection': 'keep-alive',
         'Cache-Control': 'no-cache',
@@ -154,19 +154,46 @@ IMAGE_PATTERNS = [
 
 def extract_page_content(html):
     """从完整 Wikidot HTML 中提取 #page-content 内部 HTML，剔除图片"""
-    m = re.search(
-        r'<div[^>]*id="page-content"[^>]*>(.*?)</div>\s*<!--\s*/\s*#page-content\s*-->',
-        html, re.DOTALL)
-    if m:
-        content = m.group(1)
-    else:
+    # 用标签计数器处理嵌套 <div>
+    start_tag = '<div id="page-content"'
+    start = html.find(start_tag)
+    if start == -1:
+        # 后备
         m2 = re.search(r'<body[^>]*>(.*?)</body>', html, re.DOTALL)
-        if m2:
-            content = m2.group(1)
+        return m2.group(1).strip() if m2 else None
+
+    # 找到开头的 > 匹配的结束位置
+    gt = html.find('>', start)
+    if gt == -1:
+        return None
+    content_start = gt + 1
+
+    # 计数器：逐字符扫描，找到匹配的 </div>
+    depth = 1
+    i = content_start
+    while i < len(html) and depth > 0:
+        if html[i:i+5] == '</div' and (i+5 >= len(html) or html[i+5] in '> \t\n'):
+            depth -= 1
+            if depth == 0:
+                content = html[content_start:i]
+                break
+            i += 5
+        elif html[i:i+4] == '<div' and (i+4 >= len(html) or html[i+4] in '> \t\n'):
+            depth += 1
+            i += 4
         else:
-            return None
+            i += 1
+    else:
+        # 计数器失败，后备
+        content = html[content_start:]
+
+    if not content or not content.strip():
+        return None
+
+    # 移除干扰元素
     for pat in REMOVE_PATTERNS:
         content = pat.sub('', content)
+    # 移除所有图片/视频/音频元素（离线库只保留文字）
     for pat in IMAGE_PATTERNS:
         content = pat.sub('', content)
     return content.strip()
