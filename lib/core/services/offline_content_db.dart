@@ -1,32 +1,33 @@
 import 'dart:convert';
 import 'dart:io';
 import 'dart:typed_data';
+import 'package:shared_preferences/shared_preferences.dart';
 import 'package:sqflite/sqflite.dart';
 import 'package:http/http.dart' as http;
 
 /// 离线内容数据库 — 单文件 offline_content.db
-///
-/// 包含所有页面的 gzip 压缩 HTML + 纯文本 + FTS5 全文索引
-///
-/// **重要**: 离线库只包含文字内容，所有图片/视频/音频元素
-/// 在构建时已剥离，不含任何媒体文件引用。
-///
-/// 加载方式：
-/// 1. 用户通过「下载离线库」功能下载并自动加载
-/// 2. 用户通过系统文件选择器（SAF）选择 .db 文件
 class OfflineContentDb {
   static Database? _db;
   static String? _dbPath;
   static bool _loaded = false;
+  static const _prefsKey = 'offline_db_path';
 
-  /// 数据库加载状态
   static bool get isLoaded => _loaded && _db != null;
   static String? get dbPath => _dbPath;
   static int? _totalPages;
   static Map<int, int>? _typeCounts;
 
-  /// 启动时自动加载（无文件则静默跳过，不再扫描硬编码路径）
-  static Future<bool> load() async => false;
+  /// 启动时自动恢复上次加载的离线库
+  static Future<bool> load() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final savedPath = prefs.getString(_prefsKey);
+      if (savedPath != null && await File(savedPath).exists()) {
+        return await loadFromPath(savedPath);
+      }
+    } catch (_) {}
+    return false;
+  }
 
   /// 从指定路径加载离线数据库
   static Future<bool> loadFromPath(String filePath) async {
@@ -52,12 +53,8 @@ class OfflineContentDb {
 
       await close();
 
-      _db = await openDatabase(
-        filePath,
-        readOnly: true,
-      );
+      _db = await openDatabase(filePath, readOnly: true);
 
-      // 验证表结构
       final tables = await _db!.rawQuery(
         "SELECT name FROM sqlite_master WHERE type='table' AND name IN ('pages', 'pages_fts')"
       );
@@ -70,9 +67,11 @@ class OfflineContentDb {
 
       _dbPath = filePath;
       _loaded = true;
-
-      // 读取元数据
       await _loadMeta();
+
+      // 持久化路径，下次启动自动恢复
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setString(_prefsKey, filePath);
 
       print('OfflineContentDb: 加载成功 $_dbPath ($_totalPages 页)');
       return true;
@@ -84,13 +83,17 @@ class OfflineContentDb {
     }
   }
 
-  /// 关闭数据库
+  /// 关闭数据库，清除持久化路径
   static Future<void> close() async {
     await _db?.close();
     _db = null;
     _loaded = false;
     _totalPages = null;
     _typeCounts = null;
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.remove(_prefsKey);
+    } catch (_) {}
   }
 
   /// 读取元数据
