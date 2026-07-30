@@ -167,16 +167,18 @@ class _DownloadPageState extends State<DownloadPage> {
       );
 
       if (path != null && mounted) {
-        setState(() {
-          _isDownloading = false;
-          _offlineMsg = '✅ 下载并加载成功！';
-          _offlineLoaded = true;
-          _offlinePages = OfflineContentDb.totalPages;
-          _offlineSize = await OfflineContentDb.dbFileSize;
-          // 通知 BackendService
-          _backend.loadOfflineDb(path);
-        });
-      } else if (mounted) {
+        final size = await OfflineContentDb.dbFileSize;
+        if (mounted) {
+          setState(() {
+            _isDownloading = false;
+            _offlineMsg = '✅ 下载并加载成功！';
+            _offlineLoaded = true;
+            _offlinePages = OfflineContentDb.totalPages;
+            _offlineSize = size;
+            // 通知 BackendService
+            _backend.loadOfflineDb(path);
+          });
+        } else if (mounted) {
         setState(() {
           _isDownloading = false;
           _offlineMsg = '❌ 下载失败，请重试或尝试其他线路';
@@ -229,13 +231,15 @@ class _DownloadPageState extends State<DownloadPage> {
       // 加载
       final loaded = await _backend.loadOfflineDb(destPath);
       if (loaded && mounted) {
-        setState(() {
-          _offlineLoaded = true;
-          _offlinePages = OfflineContentDb.totalPages;
-          _offlineSize = await OfflineContentDb.dbFileSize;
-          _offlineMsg = '✅ 已加载: $filePath';
-        });
-      } else if (mounted) {
+        final size = await OfflineContentDb.dbFileSize;
+        if (mounted) {
+          setState(() {
+            _offlineLoaded = true;
+            _offlinePages = OfflineContentDb.totalPages;
+            _offlineSize = size;
+            _offlineMsg = '✅ 已加载: $filePath';
+          });
+        } else if (mounted) {
         setState(() => _offlineMsg = '❌ 文件格式不正确，请选择有效的离线数据库');
       }
     } catch (e) {
