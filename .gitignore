@@ -28,6 +28,14 @@ ios/.symlinks/
 *.swo
 *~
 
+# Pycache
+__pycache__/
+*.pyc
+
+# 离线内容数据库（~200MB，不可内置到APK，通过GitHub Release分发）
+offline_content.db
+*.db.prev
+
 # OS
 .DS_Store
 Thumbs.db

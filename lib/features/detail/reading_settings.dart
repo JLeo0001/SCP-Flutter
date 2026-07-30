@@ -1,8 +1,8 @@
 import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:path_provider/path_provider.dart';
-import 'package:permission_handler/permission_handler.dart';
 import '../../core/services/preference_service.dart';
+import '../../core/utils/permissions.dart';
 
 /// 阅读设置变更类型
 /// 阅读设置变更类型
@@ -119,7 +119,7 @@ class _ReadingSettingsPanelState extends State<ReadingSettingsPanel> {
   /// 扫描外部字体目录（优先 /sdcard/Fonts）
   Future<void> _scanFonts() async {
     // 先申请权限
-    final hasPermission = await _requestStoragePermission();
+    final hasPermission = await requestStoragePermission();
     
     final dirs = <String>[];
     if (hasPermission) {
@@ -162,19 +162,6 @@ class _ReadingSettingsPanelState extends State<ReadingSettingsPanel> {
     PreferenceService.setCustomFontNames(names.join('|'));
     PreferenceService.setCustomFontPaths(paths.join('|'));
     _snack('找到 ${names.length} 个字体');
-  }
-
-  /// 申请存储权限
-  Future<bool> _requestStoragePermission() async {
-    // Android 11+ 用 manageExternalStorage，旧版用 storage
-    Permission permission;
-    if (await Permission.manageExternalStorage.status.isDenied) {
-      permission = Permission.manageExternalStorage;
-    } else {
-      permission = Permission.storage;
-    }
-    final status = await permission.request();
-    return status.isGranted;
   }
 
   void _snack(String msg) {

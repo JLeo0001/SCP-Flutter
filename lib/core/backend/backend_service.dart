@@ -1,9 +1,15 @@
 import 'dart:math';
 import '../services/database_helper.dart';
+import '../services/offline_content_db.dart';
 import 'scraper.dart';
 import 'backend_types.dart';
 
 /// 嵌入式后端服务 — 统一数据访问层
+///
+/// 数据流优先级:
+///   1. offline_content.db (离线全文库，压缩存储)
+///   2. page_cache (运行时逐页缓存)
+///   3. Wikidot 直连 (在线回退)
 class BackendService {
   static final BackendService instance = BackendService._();
   final BackendScraper _scraper = BackendScraper();
@@ -13,14 +19,38 @@ class BackendService {
   int _syncedCount = 0;
   bool _isSyncing = false;
   DateTime? _lastSync;
+  bool _offlineLoaded = false;
 
   BackendService._();
 
-  /// 初始化：触发后台同步
+  /// 初始化：加载离线库 + 后台同步
   Future<void> init() async {
     if (_initialized) return;
     _initialized = true;
+    // 尝试加载离线内容库
+    _offlineLoaded = await OfflineContentDb.load();
     _quickSync();
+  }
+
+  /// 离线库是否已加载
+  bool get isOfflineAvailable => _offlineLoaded && OfflineContentDb.isLoaded;
+
+  /// 手动加载/切换离线库文件
+  Future<bool> loadOfflineDb(String filePath) async {
+    _offlineLoaded = await OfflineContentDb.loadFromPath(filePath);
+    return _offlineLoaded;
+  }
+
+  /// 获取离线库统计信息
+  Future<Map<String, dynamic>?> getOfflineStats() async {
+    if (!isOfflineAvailable) return null;
+    final size = await OfflineContentDb.dbFileSize;
+    return {
+      'totalPages': OfflineContentDb.totalPages,
+      'typeCounts': OfflineContentDb.typeCounts,
+      'dbPath': OfflineContentDb.dbPath,
+      'dbSize': size,
+    };
   }
 
   // ═══════════════════════════════════════════
@@ -111,11 +141,31 @@ class BackendService {
   }
 
   // ═══════════════════════════════════════════
-  //  页面内容
+  //  页面内容 — 三层数据流
   // ═══════════════════════════════════════════
 
   Future<PageData> getPage(String link) async {
     final name = link.startsWith('/') ? link.substring(1) : link;
+
+    // 第1层: 离线内容库（gzip 压缩，读取即解压）
+    if (_offlineLoaded) {
+      try {
+        final html = await OfflineContentDb.getPageHtml(name);
+        if (html != null && html.isNotEmpty) {
+          final info = await OfflineContentDb.getPageInfo(name);
+          return PageData(
+            link: name,
+            title: info?['title'] as String? ?? '',
+            content: html,
+            tags: (info?['tags'] as String? ?? '').split(',')
+                .where((t) => t.isNotEmpty).toList(),
+            html: html,
+          );
+        }
+      } catch (_) {}
+    }
+
+    // 第2层: 运行时缓存（逐页缓存）
     try {
       final cached = await DatabaseHelper.getCachedPage(name);
       if (cached != null && cached.detail != null && cached.detail!.isNotEmpty) {
@@ -126,6 +176,8 @@ class BackendService {
         );
       }
     } catch (_) {}
+
+    // 第3层: 在线拉取
     final page = await _scraper.fetchPage(name);
     try {
       await DatabaseHelper.cachePage(name, page.content, page.tags.join(','));
@@ -183,10 +235,46 @@ class BackendService {
   //  搜索 & 标签
   // ═══════════════════════════════════════════
 
-  Future<List<PageRef>> search(String keyword, {int limit = 30}) async {
+  /// 搜索 — 优先使用离线 FTS5 全文搜索
+  ///
+  /// 返回增强搜索结果 [{link, title, snippet, scp_type}]
+  /// 比 PageRef 多带 snippet 和类型信息
+  Future<List<Map<String, dynamic>>> search(String keyword, {int limit = 30}) async {
+    // 第1层: 离线 FTS5 全文搜索
+    if (_offlineLoaded) {
+      try {
+        return await OfflineContentDb.fullTextSearch(keyword, limit: limit);
+      } catch (_) {}
+    }
+
+    // 第2层: 标题 LIKE 搜索
     try {
       final items = await DatabaseHelper.searchScpByTitle(keyword);
-      return items.take(limit).map((s) => PageRef(link: s.link, title: s.title)).toList();
+      return items.take(limit).map((s) => <String, dynamic>{
+        'link': s.link,
+        'title': s.title,
+        'snippet': '',
+        'scp_type': s.scpType,
+        '_index': s.index,
+      }).toList();
+    } catch (_) {
+      return [];
+    }
+  }
+
+  /// 搜索建议（仅标题匹配，速度快）
+  Future<List<Map<String, dynamic>>> searchSuggestions(String keyword, {int limit = 10}) async {
+    if (_offlineLoaded) {
+      try {
+        return await OfflineContentDb.searchTitles(keyword, limit: limit);
+      } catch (_) {}
+    }
+    try {
+      final items = await DatabaseHelper.searchScpByTitle(keyword);
+      return items.take(limit).map((s) => <String, dynamic>{
+        'link': s.link,
+        'title': s.title,
+      }).toList();
     } catch (_) {
       return [];
     }
