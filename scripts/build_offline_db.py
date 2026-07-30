@@ -7,14 +7,14 @@
 
 用法:
   python3 build_offline_db.py [--catalog assets/scp.db] [--output offline_content.db]
-      [--types 1,2,7,8] [--workers 3] [--delay 1.0] [--resume]
+      [--types 1,2,7,8] [--workers 8] [--delay 0.5] [--resume]
 
 选项:
   --catalog PATH   scp.db 路径 (默认: assets/scp.db)
   --output PATH    输出数据库路径 (默认: offline_content.db)
   --types LIST     只构建指定类型 (逗号分隔，如 1,2,7,8，默认全部)
-  --workers N      并发工作线程数 (默认: 3)
-  --delay SEC      请求间隔秒数 (默认: 1.0)
+  --workers N      并发工作线程数 (默认: 8)
+  --delay SEC      请求间隔秒数 (默认: 0.5)
   --resume         继续已有构建 (跳过已存在的页面)
   --no-fetch       只重建 FTS 索引，不重新爬取
   --stats-only     只输出统计信息，不操作
@@ -22,7 +22,7 @@
 
 import sqlite3, gzip, re, time, sys, os, json, hashlib, threading
 from html.parser import HTMLParser
-from urllib.request import Request, urlopen
+from urllib.request import Request, urlopen, build_opener, HTTPHandler
 from urllib.error import URLError, HTTPError
 from html import unescape as html_unescape
 
@@ -33,7 +33,12 @@ HEADERS = {
                   '(KHTML, like Gecko) Chrome/120.0.0.0 Mobile Safari/537.36',
     'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
     'Accept-Language': 'zh-CN,zh;q=0.9,en;q=0.5',
+    'Accept-Encoding': 'gzip, deflate',
+    'Connection': 'keep-alive',
 }
+
+# 全局 HTTP 连接池（带 keep-alive，避免每次请求建新连接）
+_opener = build_opener(HTTPHandler())
 
 # Wikidot 页面中需要移除的干扰元素选择器（简化版：正则匹配标签）
 REMOVE_PATTERNS = [
@@ -139,10 +144,10 @@ def tokenize_cjk(text):
 
 
 def fetch_page(path, timeout=20):
-    """从 Wikidot 获取页面 HTML"""
+    """从 Wikidot 获取页面 HTML（复用连接池）"""
     url = f'{HOME}/{path.lstrip("/")}'
     req = Request(url, headers=HEADERS)
-    with urlopen(req, timeout=timeout) as resp:
+    with _opener.open(req, timeout=timeout) as resp:
         raw = resp.read()
     return raw.decode('utf-8', errors='replace')
 
@@ -151,7 +156,7 @@ def fetch_page(path, timeout=20):
 
 class OfflineDbBuilder:
     def __init__(self, catalog_path, output_path, include_types=None,
-                 workers=3, delay=1.0, resume=True):
+                 workers=8, delay=0.5, resume=True):
         self.catalog_path = catalog_path
         self.output_path = output_path
         self.include_types = include_types  # None = all
@@ -159,7 +164,9 @@ class OfflineDbBuilder:
         self.delay = delay
         self.resume = resume
         self.lock = threading.Lock()
+        self.commit_lock = threading.Lock()
         self.stats = {'fetched': 0, 'failed': 0, 'skipped': 0, 'bytes_raw': 0, 'bytes_compressed': 0}
+        self._pending_commits = 0  # 未提交计数
         self._page_cache = {}  # link -> (title, scp_type, _index) from catalog
 
     def init_database(self):
@@ -168,7 +175,9 @@ class OfflineDbBuilder:
         conn = sqlite3.connect(self.output_path)
         conn.execute('PRAGMA journal_mode=WAL')
         conn.execute('PRAGMA synchronous=OFF')
-        conn.execute('PRAGMA cache_size=-8000')  # 8MB cache
+        conn.execute('PRAGMA cache_size=-64000')  # 64MB cache
+        conn.execute('PRAGMA mmap_size=268435456')  # 256MB 内存映射
+        conn.execute('PRAGMA temp_store=MEMORY')
 
         if not exists or not self.resume:
             # 全新创建
@@ -316,10 +325,16 @@ class OfflineDbBuilder:
                         compressed, text_compressed, tags,
                         raw_bytes, len(compressed), int(time.time())
                     ))
-                    conn.commit()
+                    self._pending_commits += 1
                     self.stats['fetched'] += 1
                     self.stats['bytes_raw'] += raw_bytes
                     self.stats['bytes_compressed'] += len(compressed)
+
+                # 批量提交：每 20 页或总提交达 50 页时刷盘
+                with self.commit_lock:
+                    if self._pending_commits >= 20:
+                        conn.commit()
+                        self._pending_commits = 0
                 return  # 成功
 
             except Exception as e:
@@ -379,7 +394,13 @@ class OfflineDbBuilder:
                         flush=True
                     )
 
-        # 4. 构建 FTS 索引
+        # 4. 刷剩余未提交的缓存
+        with self.commit_lock:
+            if self._pending_commits > 0:
+                conn.commit()
+                self._pending_commits = 0
+
+        # 5. 构建 FTS 索引
         self.build_fts_index(conn)
 
         # 5. 更新元数据
@@ -486,10 +507,10 @@ def main():
                         help='输出数据库路径 (默认: offline_content.db)')
     parser.add_argument('--types', default=None,
                         help='只构建指定类型 (逗号分隔，如 1,2,7,8)')
-    parser.add_argument('--workers', type=int, default=3,
-                        help='并发线程数 (默认: 3)')
-    parser.add_argument('--delay', type=float, default=1.0,
-                        help='请求间隔秒数 (默认: 1.0)')
+    parser.add_argument('--workers', type=int, default=8,
+                        help='并发线程数 (默认: 8)')
+    parser.add_argument('--delay', type=float, default=0.5,
+                        help='请求间隔秒数 (默认: 0.5)')
     parser.add_argument('--resume', action='store_true',
                         help='继续已有构建')
     parser.add_argument('--no-fetch', action='store_true',
