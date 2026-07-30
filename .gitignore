@@ -39,3 +39,4 @@ offline_content.db
 # OS
 .DS_Store
 Thumbs.db
+demo_offline.db
