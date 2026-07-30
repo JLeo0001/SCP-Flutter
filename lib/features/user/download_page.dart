@@ -139,7 +139,7 @@ class _DownloadPageState extends State<DownloadPage> {
 
       String url = _releaseUrl;
       if (useProxy == true) {
-        url = 'https://ghproxy.homeboyc.cn/$_releaseUrl';
+        url = 'https://gh-proxy.com/$_releaseUrl';
       }
 
       final path = await OfflineContentDb.download(
