@@ -10,14 +10,11 @@ import 'package:http/http.dart' as http;
 /// 包含所有页面的 gzip 压缩 HTML + 纯文本 + FTS5 全文索引
 ///
 /// **重要**: 离线库只包含文字内容，所有图片/视频/音频元素
-/// 在构建时已剥离，不含任何媒体文件引用。阅读时 WebView
-/// 渲染纯文本内容，不加载任何远程资源。
+/// 在构建时已剥离，不含任何媒体文件引用。
 ///
-/// 数据库文件位置（按优先级）:
-/// 1. 用户指定的路径（通过导入/下载）
-/// 2. /sdcard/Documents/RikkaHub/offline_content.db
-/// 3. /sdcard/SCP/offline_content.db
-/// 4. 应用私有目录 (getDatabasesPath())
+/// 加载方式：
+/// 1. 用户通过「下载离线库」功能下载并自动加载
+/// 2. 用户通过系统文件选择器（SAF）选择 .db 文件
 class OfflineContentDb {
   static Database? _db;
   static String? _dbPath;
@@ -28,33 +25,6 @@ class OfflineContentDb {
   static String? get dbPath => _dbPath;
   static int? _totalPages;
   static Map<int, int>? _typeCounts;
-
-  /// 检查离线内容数据库是否存在（不加载）
-  static Future<String?> findDbFile() async {
-    // 优先级路径
-    final candidates = [
-      '/sdcard/Documents/RikkaHub/offline_content.db',
-      '/sdcard/SCP/offline_content.db',
-      '/storage/emulated/0/Documents/RikkaHub/offline_content.db',
-      '/storage/emulated/0/SCP/offline_content.db',
-    ];
-
-    // 先查外部路径
-    for (final path in candidates) {
-      final file = File(path);
-      if (await file.exists()) return path;
-    }
-
-    // 再查应用私有目录
-    final dbPath = await getDatabasesPath();
-    final privatePath = p.join(dbPath, 'offline_content.db');
-    if (await File(privatePath).exists()) return privatePath;
-
-    return null;
-  }
-
-  /// 从文件路径加载离线数据库
-  static Future<bool> loadFromPath(String filePath) async {
     try {
       final file = File(filePath);
       if (!await file.exists()) {
@@ -109,15 +79,14 @@ class OfflineContentDb {
     }
   }
 
-  /// 从默认路径加载
+  /// 自动扫描默认路径（仅启动时调用，无文件则静默跳过）
   static Future<bool> load() async {
-    final path = await findDbFile();
-    if (path == null) return false;
-    return loadFromPath(path);
+    // 不再扫描硬编码路径，只通过 loadFromPath / download 加载
+    return false;
   }
 
-  /// **注意**: 离线数据库不应内置到 APK 中（体积过大）。
-  /// 用户通过「下载离线库」功能从 GitHub Releases 获取。
+  /// 从指定路径加载离线数据库
+  static Future<bool> loadFromPath(String filePath) async {
 
   /// 关闭数据库
   static Future<void> close() async {
