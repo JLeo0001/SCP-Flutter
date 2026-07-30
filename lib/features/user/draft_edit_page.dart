@@ -190,8 +190,12 @@ class _DraftEditPageState extends State<DraftEditPage> {
               tooltip: '撤回 (${_undoStack.length - 1})',
               onPressed: _undoStack.length > 1 ? _undo : null,
             ),
-            TextButton.icon(
+            FilledButton.tonalIcon(
               onPressed: _dirty ? () => _saveDraft() : null,
+              style: FilledButton.styleFrom(
+                padding: const EdgeInsets.symmetric(horizontal: 12),
+                visualDensity: VisualDensity.compact,
+              ),
               icon: _saving
                   ? const SizedBox(
                       width: 16,
@@ -199,8 +203,7 @@ class _DraftEditPageState extends State<DraftEditPage> {
                       child: CircularProgressIndicator(strokeWidth: 2),
                     )
                   : Icon(_dirty ? Icons.save : Icons.check_circle,
-                      size: 18,
-                      color: _dirty ? null : cs.primary),
+                      size: 18),
               label: Text(_dirty ? '保存' : '已保存'),
             ),
           ],
