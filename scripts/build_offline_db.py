@@ -300,11 +300,26 @@ class OfflineDbBuilder:
                 CREATE VIRTUAL TABLE IF NOT EXISTS pages_fts USING fts5(
                     title, text_content, tokenize='unicode61'
                 );
+                CREATE TABLE IF NOT EXISTS resources (
+                    path TEXT PRIMARY KEY,
+                    content BLOB,
+                    content_type TEXT DEFAULT 'text/plain',
+                    updated_at INTEGER DEFAULT 0
+                );
                 CREATE TABLE IF NOT EXISTS build_meta (
                     key TEXT PRIMARY KEY, value TEXT
                 );
             ''')
             conn.commit()
+
+        # 确保 resources 表存在（增量构建时可能没有）
+        conn.execute('''CREATE TABLE IF NOT EXISTS resources (
+            path TEXT PRIMARY KEY,
+            content BLOB,
+            content_type TEXT DEFAULT 'text/plain',
+            updated_at INTEGER DEFAULT 0
+        )''')
+        conn.commit()
         return conn
 
     def load_catalog(self, cat_conn):
@@ -435,6 +450,10 @@ class OfflineDbBuilder:
         cat_conn.close()
 
         conn = self.init_database()
+
+        # 0. 存储 CSS/JS 资源模板
+        self.store_resources(conn)
+
         existing = self.get_existing_links(conn)
         if self.resume and existing:
             print(f'已有 {len(existing)} 条已缓存，将跳过')
@@ -502,6 +521,30 @@ class OfflineDbBuilder:
         conn.commit()
         self.print_stats(start_time, conn)
         conn.close()
+
+    def store_resources(self, conn):
+        """将 CSS/JS 阅读模板存入 resources 表"""
+        template_dir = os.path.join(os.path.dirname(__file__), 'templates')
+        resources = [
+            ('reader.css', 'text/css'),
+            ('reader.js', 'application/javascript'),
+        ]
+        stored = 0
+        for name, ctype in resources:
+            path = os.path.join(template_dir, name)
+            if not os.path.exists(path):
+                print(f'  模板文件不存在，跳过: {path}')
+                continue
+            with open(path, 'rb') as f:
+                data = f.read()
+            conn.execute(
+                'INSERT OR REPLACE INTO resources (path, content, content_type, updated_at) '
+                'VALUES (?, ?, ?, ?)',
+                (name, data, ctype, int(time.time()))
+            )
+            stored += 1
+        conn.commit()
+        print(f'  资源模板已存储: {stored} 个')
 
     def print_stats(self, start_time, conn):
         elapsed = time.time() - start_time

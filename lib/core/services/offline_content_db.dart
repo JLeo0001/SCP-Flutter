@@ -275,6 +275,39 @@ class OfflineContentDb {
   }
 
   // ═══════════════════════════════════════════
+  //  资源读取（CSS/JS 模板）
+  // ═══════════════════════════════════════════
+
+  /// 从离线库读取 CSS/JS 资源，未找到返回 null
+  ///
+  /// [path] 如 'reader.css', 'reader.js'
+  static Future<String?> getResource(String path) async {
+    if (_db == null) return null;
+    try {
+      final rows = await _db!.rawQuery(
+        'SELECT content FROM resources WHERE path = ?', [path]
+      );
+      if (rows.isEmpty) return null;
+      final blob = rows.first['content'] as Uint8List?;
+      if (blob == null) return null;
+      return utf8.decode(blob);
+    } catch (_) {
+      return null;
+    }
+  }
+
+  /// 获取所有资源路径列表
+  static Future<List<String>> listResources() async {
+    if (_db == null) return [];
+    try {
+      final rows = await _db!.rawQuery('SELECT path FROM resources');
+      return rows.map((r) => r['path'] as String).toList();
+    } catch (_) {
+      return [];
+    }
+  }
+
+  // ═══════════════════════════════════════════
   //  统计信息
   // ═══════════════════════════════════════════
 
