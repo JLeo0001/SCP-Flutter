@@ -9,7 +9,7 @@ on:
       workers:
         description: '并发线程数'
         required: false
-        default: '8'
+        default: '4'
   schedule:
     - cron: '0 0 * * 0'   # 每周日 00:00 UTC
 
@@ -73,8 +73,8 @@ jobs:
           python3 scripts/build_offline_db.py \
             --catalog assets/scp.db \
             --output offline_content.db \
-            --workers ${WORKERS:-8} \
-            --delay 0.5 \
+            --workers ${WORKERS:-4} \
+            --rate 4 \
             $ARGS
 
       - name: Compress for release

@@ -5,42 +5,129 @@
 从 scp.db 目录读取全部条目，逐个爬取 Wikidot 页面内容，
 提取 #page-content HTML，gzip 压缩后存入 SQLite + FTS5 全文索引。
 
+爬取策略：令牌桶限流 + 随机抖动 + UA 轮换 + URL 乱序，防反爬。
+
 用法:
   python3 build_offline_db.py [--catalog assets/scp.db] [--output offline_content.db]
-      [--types 1,2,7,8] [--workers 8] [--delay 0.5] [--resume]
+      [--types 1,2,7,8] [--workers 4] [--rate 4] [--resume]
 
 选项:
   --catalog PATH   scp.db 路径 (默认: assets/scp.db)
   --output PATH    输出数据库路径 (默认: offline_content.db)
   --types LIST     只构建指定类型 (逗号分隔，如 1,2,7,8，默认全部)
-  --workers N      并发工作线程数 (默认: 8)
-  --delay SEC      请求间隔秒数 (默认: 0.5)
+  --workers N      并发工作线程数 (默认: 4)
+  --rate N         全局每秒请求上限 (默认: 4)
   --resume         继续已有构建 (跳过已存在的页面)
   --no-fetch       只重建 FTS 索引，不重新爬取
   --stats-only     只输出统计信息，不操作
 """
 
-import sqlite3, gzip, re, time, sys, os, json, hashlib, threading
+import sqlite3, gzip, re, time, sys, os, json, random, threading
 from html.parser import HTMLParser
-from urllib.request import Request, urlopen, build_opener, HTTPHandler
+from urllib.request import Request, build_opener, HTTPHandler, HTTPSHandler
 from urllib.error import URLError, HTTPError
 from html import unescape as html_unescape
 
 # ── 配置 ──
 HOME = 'https://scp-wiki-cn.wikidot.com'
-HEADERS = {
-    'User-Agent': 'Mozilla/5.0 (Linux; Android 14) AppleWebKit/537.36 '
-                  '(KHTML, like Gecko) Chrome/120.0.0.0 Mobile Safari/537.36',
-    'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
-    'Accept-Language': 'zh-CN,zh;q=0.9,en;q=0.5',
-    'Accept-Encoding': 'gzip, deflate',
-    'Connection': 'keep-alive',
-}
 
-# 全局 HTTP 连接池（带 keep-alive，避免每次请求建新连接）
-_opener = build_opener(HTTPHandler())
+# 轮换 User-Agent 列表（都是真实移动端 UA）
+USER_AGENTS = [
+    # Chrome Android
+    'Mozilla/5.0 (Linux; Android 14; Pixel 8 Pro) AppleWebKit/537.36 '
+    '(KHTML, like Gecko) Chrome/126.0.6478.122 Mobile Safari/537.36',
+    'Mozilla/5.0 (Linux; Android 13; SM-S908E) AppleWebKit/537.36 '
+    '(KHTML, like Gecko) Chrome/125.0.6422.165 Mobile Safari/537.36',
+    # Samsung Browser
+    'Mozilla/5.0 (Linux; Android 14; SM-S928B) AppleWebKit/537.36 '
+    '(KHTML, like Gecko) SamsungBrowser/25.0 Chrome/122.0.6261.105 Mobile Safari/537.36',
+    # MIUI Browser
+    'Mozilla/5.0 (Linux; Android 14; 23127PN0CC) AppleWebKit/537.36 '
+    '(KHTML, like Gecko) Version/4.0 Chrome/120.0.6099.244 Mobile Safari/537.36 XiaoMi/MiuiBrowser/17.3.1401',
+    # Huawei Browser
+    'Mozilla/5.0 (Linux; Android 12; HarmonyOS; ALN-AL00) AppleWebKit/537.36 '
+    '(KHTML, like Gecko) Chrome/99.0.4844.88 HuaweiBrowser/15.0.2.311 Mobile Safari/537.36',
+]
 
-# Wikidot 页面中需要移除的干扰元素选择器（简化版：正则匹配标签）
+# 轮换 Referer 列表
+REFERERS = [
+    'https://scp-wiki-cn.wikidot.com/',
+    'https://scp-wiki-cn.wikidot.com/scp-series',
+    'https://scp-wiki-cn.wikidot.com/scp-series-2',
+    'https://scp-wiki-cn.wikidot.com/system:recent-changes',
+    'https://scp-wiki-cn.wikidot.com/most-recently-created-cn',
+    'https://www.google.com/search?q=scp+foundation',
+    'https://www.bing.com/search?q=scp',
+]
+
+# 全局 HTTP 连接池
+_opener = build_opener(HTTPHandler(), HTTPSHandler())
+
+
+# ── 令牌桶限流器（线程安全）──
+
+class TokenBucket:
+    """令牌桶限流器 — 控制全局请求速率，防反爬"""
+
+    def __init__(self, rate=4, burst=2):
+        self.rate = rate           # 每秒发放令牌数
+        self.burst = burst         # 最大突发
+        self.tokens = float(burst)
+        self.last_refill = time.monotonic()
+        self.lock = threading.Lock()
+
+    def acquire(self):
+        """获取一个令牌，阻塞直到可用"""
+        while True:
+            with self.lock:
+                now = time.monotonic()
+                elapsed = now - self.last_refill
+                self.tokens = min(self.burst, self.tokens + elapsed * self.rate)
+                self.last_refill = now
+                if self.tokens >= 1:
+                    self.tokens -= 1
+                    return
+            # 没有令牌，等一会再试
+            time.sleep(0.02 + random.random() * 0.03)
+
+
+# 全局限流器
+_rate_limiter = TokenBucket(rate=4, burst=2)
+
+
+def make_headers():
+    """生成带随机 UA 和 Referer 的请求头（更像真实浏览）"""
+    # 随机 ±20% 的 Accept-Language 权重
+    lang_weight = random.randint(5, 10)
+    return {
+        'User-Agent': random.choice(USER_AGENTS),
+        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+        'Accept-Language': f'zh-CN,zh;q=0.{lang_weight},en;q=0.5',
+        'Accept-Encoding': 'gzip, deflate',
+        'Referer': random.choice(REFERERS),
+        'Connection': 'keep-alive',
+        'Cache-Control': 'no-cache',
+        'Pragma': 'no-cache',
+    }
+
+
+def fetch_page(path, timeout=25):
+    """从 Wikidot 获取页面 HTML（带限流 + 随机头）"""
+    # 获取令牌（阻塞直到允许请求）
+    _rate_limiter.acquire()
+
+    # 随机额外延迟（150~450ms 抖动，像人类阅读间隔）
+    jitter = 0.15 + random.random() * 0.30
+    time.sleep(jitter)
+
+    url = f'{HOME}/{path.lstrip("/")}'
+    req = Request(url, headers=make_headers())
+    with _opener.open(req, timeout=timeout) as resp:
+        raw = resp.read()
+    return raw.decode('utf-8', errors='replace')
+
+
+# Wikidot 页面中需要移除的干扰元素
 REMOVE_PATTERNS = [
     re.compile(r'<div class="scp-rating-block[^>]*>.*?</div>', re.DOTALL),
     re.compile(r'<div class="page-rate-widget[^>]*>.*?</div>', re.DOTALL),
@@ -50,41 +137,36 @@ REMOVE_PATTERNS = [
     re.compile(r'<a class="action-btn[^>]*>.*?</a>', re.DOTALL),
 ]
 
-# 图片相关标签 — 全部删除，不保留引用
 IMAGE_PATTERNS = [
-    re.compile(r'<img[^>]*>', re.DOTALL),                    # <img ...>
-    re.compile(r'<picture[^>]*>.*?</picture>', re.DOTALL),    # <picture>...</picture>
-    re.compile(r'<figure[^>]*>.*?</figure>', re.DOTALL),      # <figure>...</figure>
+    re.compile(r'<img[^>]*>', re.DOTALL),
+    re.compile(r'<picture[^>]*>.*?</picture>', re.DOTALL),
+    re.compile(r'<figure[^>]*>.*?</figure>', re.DOTALL),
     re.compile(r'<figcaption[^>]*>.*?</figcaption>', re.DOTALL),
-    re.compile(r'<video[^>]*>.*?</video>', re.DOTALL),        # 视频也排除
-    re.compile(r'<audio[^>]*>.*?</audio>', re.DOTALL),        # 音频也排除
-    re.compile(r'<source[^>]*>', re.DOTALL),                  # <source> 标签
-    re.compile(r'<svg[^>]*>.*?</svg>', re.DOTALL),            # SVG 矢量图
-    re.compile(r'<canvas[^>]*>.*?</canvas>', re.DOTALL),      # Canvas 画布
-    # 内联 background-image 样式（部分 Wikidot 页面用 div 模拟图片）
+    re.compile(r'<video[^>]*>.*?</video>', re.DOTALL),
+    re.compile(r'<audio[^>]*>.*?</audio>', re.DOTALL),
+    re.compile(r'<source[^>]*>', re.DOTALL),
+    re.compile(r'<svg[^>]*>.*?</svg>', re.DOTALL),
+    re.compile(r'<canvas[^>]*>.*?</canvas>', re.DOTALL),
     re.compile(r'background-image\s*:\s*url\([^)]+\)', re.DOTALL),
     re.compile(r'background\s*:\s*[^;]*url\([^)]+\)[^;]*;', re.DOTALL),
 ]
 
-# ── 工具函数 ──
 
 def extract_page_content(html):
     """从完整 Wikidot HTML 中提取 #page-content 内部 HTML，剔除图片"""
-    m = re.search(r'<div[^>]*id="page-content"[^>]*>(.*?)</div>\s*<!--\s*/\s*#page-content\s*-->',
-                  html, re.DOTALL)
+    m = re.search(
+        r'<div[^>]*id="page-content"[^>]*>(.*?)</div>\s*<!--\s*/\s*#page-content\s*-->',
+        html, re.DOTALL)
     if m:
         content = m.group(1)
     else:
-        # 后备：取 <body> 内容
         m2 = re.search(r'<body[^>]*>(.*?)</body>', html, re.DOTALL)
         if m2:
             content = m2.group(1)
         else:
             return None
-    # 移除干扰元素
     for pat in REMOVE_PATTERNS:
         content = pat.sub('', content)
-    # 移除所有图片/视频/音频元素（离线库只保留文字）
     for pat in IMAGE_PATTERNS:
         content = pat.sub('', content)
     return content.strip()
@@ -92,6 +174,7 @@ def extract_page_content(html):
 
 class HTMLStripper(HTMLParser):
     """剥离 HTML 标签，保留纯文本"""
+
     def __init__(self):
         super().__init__()
         self.text = []
@@ -118,11 +201,10 @@ class HTMLStripper(HTMLParser):
 
 
 def strip_html(html_content):
-    """将 HTML 转为纯文本（保留段落结构）"""
+    """将 HTML 转为纯文本"""
     stripper = HTMLStripper()
     stripper.feed(html_content)
     text = stripper.get_text()
-    # 合并多余空白
     text = re.sub(r'[ \t]+', ' ', text)
     text = re.sub(r'\n{3,}', '\n\n', text)
     text = html_unescape(text)
@@ -143,31 +225,26 @@ def tokenize_cjk(text):
     return ''.join(result)
 
 
-def fetch_page(path, timeout=20):
-    """从 Wikidot 获取页面 HTML（复用连接池）"""
-    url = f'{HOME}/{path.lstrip("/")}'
-    req = Request(url, headers=HEADERS)
-    with _opener.open(req, timeout=timeout) as resp:
-        raw = resp.read()
-    return raw.decode('utf-8', errors='replace')
-
-
 # ── 主构建逻辑 ──
 
 class OfflineDbBuilder:
     def __init__(self, catalog_path, output_path, include_types=None,
-                 workers=8, delay=0.5, resume=True):
+                 workers=4, rate=4, resume=True):
         self.catalog_path = catalog_path
         self.output_path = output_path
-        self.include_types = include_types  # None = all
+        self.include_types = include_types
         self.workers = workers
-        self.delay = delay
         self.resume = resume
         self.lock = threading.Lock()
         self.commit_lock = threading.Lock()
-        self.stats = {'fetched': 0, 'failed': 0, 'skipped': 0, 'bytes_raw': 0, 'bytes_compressed': 0}
-        self._pending_commits = 0  # 未提交计数
-        self._page_cache = {}  # link -> (title, scp_type, _index) from catalog
+        self.stats = {'fetched': 0, 'failed': 0, 'skipped': 0,
+                      'bytes_raw': 0, 'bytes_compressed': 0}
+        self._pending_commits = 0
+        self._page_cache = {}
+
+        # 全局令牌桶限流（覆盖所有 worker）
+        global _rate_limiter
+        _rate_limiter = TokenBucket(rate=rate, burst=max(1, rate // 2))
 
     def init_database(self):
         """创建或打开输出数据库"""
@@ -175,12 +252,11 @@ class OfflineDbBuilder:
         conn = sqlite3.connect(self.output_path)
         conn.execute('PRAGMA journal_mode=WAL')
         conn.execute('PRAGMA synchronous=OFF')
-        conn.execute('PRAGMA cache_size=-64000')  # 64MB cache
-        conn.execute('PRAGMA mmap_size=268435456')  # 256MB 内存映射
+        conn.execute('PRAGMA cache_size=-64000')
+        conn.execute('PRAGMA mmap_size=268435456')
         conn.execute('PRAGMA temp_store=MEMORY')
 
         if not exists or not self.resume:
-            # 全新创建
             conn.executescript('''
                 CREATE TABLE IF NOT EXISTS pages (
                     link TEXT PRIMARY KEY,
@@ -194,20 +270,14 @@ class OfflineDbBuilder:
                     compressed_size INTEGER DEFAULT 0,
                     fetched_at INTEGER DEFAULT 0
                 );
-
                 CREATE VIRTUAL TABLE IF NOT EXISTS pages_fts USING fts5(
-                    title,
-                    text_content,
-                    tokenize='unicode61'
+                    title, text_content, tokenize='unicode61'
                 );
-
                 CREATE TABLE IF NOT EXISTS build_meta (
-                    key TEXT PRIMARY KEY,
-                    value TEXT
+                    key TEXT PRIMARY KEY, value TEXT
                 );
             ''')
             conn.commit()
-
         return conn
 
     def load_catalog(self, cat_conn):
@@ -234,7 +304,6 @@ class OfflineDbBuilder:
         print(f'目录加载完成: {len(self._page_cache)} 条目')
 
     def get_existing_links(self, conn):
-        """获取已构建的页面链接"""
         rows = conn.execute('SELECT link FROM pages').fetchall()
         return {r[0] for r in rows}
 
@@ -255,15 +324,11 @@ class OfflineDbBuilder:
                 text = gzip.decompress(text_blob).decode('utf-8', errors='replace')
             except Exception:
                 continue
-            tokenized_title = tokenize_cjk(title)
-            tokenized_text = tokenize_cjk(text)
-            batch.append((rowid, tokenized_title, tokenized_text))
+            batch.append((rowid, tokenize_cjk(title), tokenize_cjk(text)))
 
             if len(batch) >= 500:
                 conn.executemany(
-                    'INSERT INTO pages_fts(rowid, title, text_content) VALUES (?, ?, ?)',
-                    batch
-                )
+                    'INSERT INTO pages_fts(rowid, title, text_content) VALUES (?, ?, ?)', batch)
                 conn.commit()
                 processed += len(batch)
                 print(f'  FTS: {processed}/{total}', end='\r')
@@ -271,34 +336,30 @@ class OfflineDbBuilder:
 
         if batch:
             conn.executemany(
-                'INSERT INTO pages_fts(rowid, title, text_content) VALUES (?, ?, ?)',
-                batch
-            )
+                'INSERT INTO pages_fts(rowid, title, text_content) VALUES (?, ?, ?)', batch)
             conn.commit()
             processed += len(batch)
 
         print(f'\nFTS 索引重建完成: {len(rows)} 条')
 
-    def process_page(self, link, meta, conn, max_retries=2):
-        """爬取并处理单个页面（失败自动重试 max_retries 次）"""
+    def process_page(self, link, meta, conn):
+        """爬取并处理单个页面（最多重试 1 次）"""
         if self.resume:
             existing = conn.execute(
-                'SELECT 1 FROM pages WHERE link=? AND html IS NOT NULL',
-                (link,)
+                'SELECT 1 FROM pages WHERE link=? AND html IS NOT NULL', (link,)
             ).fetchone()
             if existing:
                 with self.lock:
                     self.stats['skipped'] += 1
                 return
 
-        for attempt in range(max_retries + 1):
+        for attempt in range(2):  # 最多尝试 2 次（首次 + 1 次重试）
             try:
-                if attempt > 0:
-                    # 重试等待：指数退避 3s, 9s
-                    wait = 3 * (3 ** (attempt - 1))
-                    time.sleep(wait)
+                if attempt == 1:
+                    # 重试前：随机等待 5~12 秒（像人类刷新页面）
+                    backoff = 5 + random.random() * 7
+                    time.sleep(backoff)
 
-                time.sleep(self.delay)
                 html = fetch_page(link)
                 content = extract_page_content(html)
 
@@ -307,11 +368,8 @@ class OfflineDbBuilder:
 
                 raw_bytes = len(content.encode('utf-8'))
                 compressed = gzip.compress(content.encode('utf-8'), compresslevel=6)
-
-                # 纯文本版本（不含标签）
                 plain = strip_html(content)
                 text_compressed = gzip.compress(plain.encode('utf-8'), compresslevel=6)
-
                 tags = extract_tags(html)
 
                 with self.lock:
@@ -320,26 +378,23 @@ class OfflineDbBuilder:
                         (link, title, scp_type, _index, html, text_content, tags,
                          uncompressed_size, compressed_size, fetched_at)
                         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                    ''', (
-                        link, meta['title'], meta['scp_type'], meta['_index'],
-                        compressed, text_compressed, tags,
-                        raw_bytes, len(compressed), int(time.time())
-                    ))
+                    ''', (link, meta['title'], meta['scp_type'], meta['_index'],
+                          compressed, text_compressed, tags,
+                          raw_bytes, len(compressed), int(time.time())))
                     self._pending_commits += 1
                     self.stats['fetched'] += 1
                     self.stats['bytes_raw'] += raw_bytes
                     self.stats['bytes_compressed'] += len(compressed)
 
-                # 批量提交：每 20 页或总提交达 50 页时刷盘
                 with self.commit_lock:
                     if self._pending_commits >= 20:
                         conn.commit()
                         self._pending_commits = 0
                 return  # 成功
 
-            except Exception as e:
-                if attempt < max_retries:
-                    continue  # 重试
+            except Exception:
+                if attempt == 0:
+                    continue  # 重试 1 次
                 with self.lock:
                     self.stats['failed'] += 1
 
@@ -347,13 +402,11 @@ class OfflineDbBuilder:
         """执行完整构建流程"""
         start_time = time.time()
 
-        # 1. 连接 catalog
         print(f'打开目录: {self.catalog_path}')
         cat_conn = sqlite3.connect(self.catalog_path)
         self.load_catalog(cat_conn)
         cat_conn.close()
 
-        # 2. 初始化输出数据库
         conn = self.init_database()
         existing = self.get_existing_links(conn)
         if self.resume and existing:
@@ -362,25 +415,27 @@ class OfflineDbBuilder:
         all_links = list(self._page_cache.keys())
         pages_to_fetch = [l for l in all_links if l not in existing] if self.resume else all_links
 
-        print(f'待爬取: {len(pages_to_fetch)} / {len(all_links)}')
-
         if not pages_to_fetch and self.resume:
             self.build_fts_index(conn)
             self.print_stats(start_time, conn)
             conn.close()
             return
 
-        # 3. 多线程爬取
+        # ═══ 关键：URL 乱序 ═══
+        # 不按 SCP 编号顺序爬，避免被识别为批量抓取
+        random.shuffle(pages_to_fetch)
+        total = len(pages_to_fetch)
+        print(f'待爬取: {total} / {len(all_links)}（乱序排列）')
+
         import concurrent.futures
         with concurrent.futures.ThreadPoolExecutor(max_workers=self.workers) as executor:
             futures = {}
             for link in pages_to_fetch:
-                meta = self._page_cache[link]
-                future = executor.submit(self.process_page, link, meta, conn)
+                future = executor.submit(self.process_page, link,
+                                         self._page_cache[link], conn)
                 futures[future] = link
 
             done = 0
-            total = len(futures)
             for future in concurrent.futures.as_completed(futures):
                 done += 1
                 if done % 50 == 0 or done == total:
@@ -389,52 +444,34 @@ class OfflineDbBuilder:
                     rate = done / elapsed if elapsed > 0 else 0
                     print(
                         f'  [{done}/{total}] '
-                        f'已取{s["fetched"]} 失败{s["failed"]} 跳过{s["skipped"]} '
+                        f'✓{s["fetched"]} ✗{s["failed"]} ⏭{s["skipped"]} '
                         f'{rate:.1f}/s',
-                        flush=True
-                    )
+                        flush=True)
 
-        # 4. 刷剩余未提交的缓存
+        # 刷剩余未提交
         with self.commit_lock:
             if self._pending_commits > 0:
                 conn.commit()
                 self._pending_commits = 0
 
-        # 5. 构建 FTS 索引
         self.build_fts_index(conn)
 
-        # 5. 更新元数据
-        conn.execute(
-            'INSERT OR REPLACE INTO build_meta VALUES (?, ?)',
-            ('build_version', '2')
-        )
-        conn.execute(
-            'INSERT OR REPLACE INTO build_meta VALUES (?, ?)',
-            ('has_images', 'false')  # 离线库不含图片
-        )
-        conn.execute(
-            'INSERT OR REPLACE INTO build_meta VALUES (?, ?)',
-            ('build_time', str(int(time.time())))
-        )
-        conn.execute(
-            'INSERT OR REPLACE INTO build_meta VALUES (?, ?)',
-            ('total_pages', str(len(all_links)))
-        )
-        conn.execute(
-            'INSERT OR REPLACE INTO build_meta VALUES (?, ?)',
-            ('catalog_entries', str(len(self._page_cache)))
-        )
+        # 更新元数据
+        for k, v in [
+            ('build_version', '3'),
+            ('has_images', 'false'),
+            ('build_time', str(int(time.time()))),
+            ('total_pages', str(len(all_links))),
+            ('catalog_entries', str(len(self._page_cache))),
+        ]:
+            conn.execute('INSERT OR REPLACE INTO build_meta VALUES (?, ?)', (k, v))
 
-        # 按类型统计
         type_counts = {}
         for meta in self._page_cache.values():
             t = meta['scp_type']
             type_counts[t] = type_counts.get(t, 0) + 1
-        conn.execute(
-            'INSERT OR REPLACE INTO build_meta VALUES (?, ?)',
-            ('type_counts', json.dumps(type_counts))
-        )
-
+        conn.execute('INSERT OR REPLACE INTO build_meta VALUES (?, ?)',
+                     ('type_counts', json.dumps(type_counts)))
         conn.commit()
         self.print_stats(start_time, conn)
         conn.close()
@@ -452,11 +489,10 @@ class OfflineDbBuilder:
         print(f'  跳过:      {s["skipped"]}')
         if s["bytes_raw"] > 0:
             ratio = s["bytes_compressed"] / s["bytes_raw"] * 100
-            print(f'  原始大小:  {s["bytes_raw"]/1024/1024:.1f}MB')
-            print(f'  压缩后:    {s["bytes_compressed"]/1024/1024:.1f}MB ({ratio:.1f}%)')
-        print(f'  数据库大小: {db_size/1024/1024:.1f}MB')
+            print(f'  原始:  {s["bytes_raw"]/1024/1024:.1f}MB')
+            print(f'  压缩:  {s["bytes_compressed"]/1024/1024:.1f}MB ({ratio:.1f}%)')
+        print(f'  数据库: {db_size/1024/1024:.1f}MB')
 
-        # 输出内容统计
         rows = conn.execute('''
             SELECT scp_type, COUNT(*) as cnt,
                    SUM(uncompressed_size) as raw,
@@ -464,16 +500,14 @@ class OfflineDbBuilder:
             FROM pages GROUP BY scp_type ORDER BY cnt DESC
         ''').fetchall()
         if rows:
-            print(f'\n  各类型统计:')
+            print(f'\n  各类型:')
             for tp, cnt, raw, comp in rows:
-                raw_mb = (raw or 0) / 1024 / 1024
-                comp_mb = (comp or 0) / 1024 / 1024
-                ratio = comp_mb / raw_mb * 100 if raw_mb > 0 else 0
-                print(f'    type {tp:2d}: {cnt:5d} 条, {raw_mb:.1f}MB → {comp_mb:.1f}MB ({ratio:.1f}%)')
+                rm = (raw or 0) / 1024 / 1024
+                cm = (comp or 0) / 1024 / 1024
+                print(f'    type {tp:2d}: {cnt:5d} 条, {rm:.1f}MB → {cm:.1f}MB')
 
 
 def extract_tags(html):
-    """提取页面标签"""
     tags = []
     m = re.search(r'<div[^>]*id="page-tags"[^>]*>(.*?)</div>', html, re.DOTALL)
     if m:
@@ -482,7 +516,6 @@ def extract_tags(html):
 
 
 def print_stats_only(catalog_path):
-    """只输出统计信息"""
     conn = sqlite3.connect(catalog_path)
     rows = conn.execute('''
         SELECT scp_type, COUNT(*) FROM scps
@@ -507,10 +540,10 @@ def main():
                         help='输出数据库路径 (默认: offline_content.db)')
     parser.add_argument('--types', default=None,
                         help='只构建指定类型 (逗号分隔，如 1,2,7,8)')
-    parser.add_argument('--workers', type=int, default=8,
-                        help='并发线程数 (默认: 8)')
-    parser.add_argument('--delay', type=float, default=0.5,
-                        help='请求间隔秒数 (默认: 0.5)')
+    parser.add_argument('--workers', type=int, default=4,
+                        help='并发线程数 (默认: 4)')
+    parser.add_argument('--rate', type=int, default=4,
+                        help='全局每秒请求上限 (默认: 4)')
     parser.add_argument('--resume', action='store_true',
                         help='继续已有构建')
     parser.add_argument('--no-fetch', action='store_true',
@@ -536,7 +569,7 @@ def main():
         output_path=args.output,
         include_types=include_types,
         workers=args.workers,
-        delay=args.delay,
+        rate=args.rate,
         resume=args.resume,
     )
 
