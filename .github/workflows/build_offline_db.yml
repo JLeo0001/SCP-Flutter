@@ -82,26 +82,7 @@ jobs:
           echo "=== 离线数据库统计 ==="
           python3 scripts/build_offline_db.py --catalog assets/scp.db --stats-only
           echo ""
-          python3 -c "
-import sqlite3, os
-conn = sqlite3.connect('offline_content.db')
-rows = conn.execute('SELECT key, value FROM build_meta').fetchall()
-print('构建元数据:')
-for k, v in rows:
-    print(f'  {k}: {v}')
-print()
-rows2 = conn.execute('''
-    SELECT scp_type, COUNT(*) as cnt,
-           ROUND(SUM(compressed_size)/1024.0/1024.0, 1) as comp_mb
-    FROM pages GROUP BY scp_type ORDER BY cnt DESC
-''').fetchall()
-total_pages = sum(r[1] for r in rows2)
-total_mb = sum(r[2] for r in rows2)
-print(f'内容统计: {total_pages} 页, {total_mb:.1f}MB')
-for tp, cnt, mb in rows2:
-    print(f'  type {tp:2d}: {cnt:5d} 页, {mb:.1f}MB')
-conn.close()
-"
+          python3 scripts/print_db_stats.py offline_content.db
           echo ""
           echo "最终文件大小: $(du -h offline_content.db | cut -f1)"
 
