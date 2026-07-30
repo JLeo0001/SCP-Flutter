@@ -121,6 +121,26 @@ class _RecordListPageState extends State<RecordListPage> {
           Text('已选 ${_selectedLinks.length} 项',
               style: TextStyle(fontWeight: FontWeight.w500, color: cs.onSurface)),
           const Spacer(),
+          TextButton(
+            onPressed: () {
+              setState(() {
+                _selectedLinks.addAll(_records.map((r) => r.link));
+              });
+            },
+            child: const Text('全选', style: TextStyle(fontSize: 13)),
+          ),
+          TextButton(
+            onPressed: () {
+              setState(() {
+                final allLinks = _records.map((r) => r.link).toSet();
+                _selectedLinks.removeAll(allLinks
+                    .intersection(_selectedLinks));
+                _selectedLinks.addAll(allLinks
+                    .difference(_selectedLinks));
+              });
+            },
+            child: const Text('反选', style: TextStyle(fontSize: 13)),
+          ),
           TextButton.icon(
             onPressed: _batchDelete,
             icon: const Icon(Icons.delete_outline, size: 18),
