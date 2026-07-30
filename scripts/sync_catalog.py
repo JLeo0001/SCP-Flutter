@@ -46,19 +46,30 @@ def skip(link):
 def infer(link, parent_type=None):
     if link.startswith('/scp-cn-'): return 2
     if link.startswith('/scp-'):
-        # 检查是否带特殊后缀
-        suffix_match = re.search(r'/scp-\d+-(j|ex|arc|bus|th|pt|ko|ru|es|fr|pl|de|it|zh|jp|splash)$', link)
-        if suffix_match:
-            suf = suffix_match.group(1)
+        # 先检查带横杠后缀的（/scp-999-ex、/scp-091-arc）
+        m = re.search(r'/scp-\d+-(j|ex|arc|bus|d|r|f|splash)$', link)
+        if m:
+            suf = m.group(1)
             if suf == 'j': return 3
             if suf == 'ex': return 5
-            if suf in ('th', 'pt', 'ko', 'ru', 'es', 'fr', 'pl', 'de', 'it', 'zh', 'jp'):
-                return 23  # international
-            if suf in ('arc', 'splash'):
-                return 7  # tales
-            if suf == 'bus':
-                return 3  # joke
-        return 1  # 标准 SCP
+            if suf in ('arc', 'splash', 'd', 'r', 'f'): return 7
+            if suf == 'bus': return 3
+        # 检查无横杠后缀（/scp-7bus→/scp-\d+bus）
+        m2 = re.search(r'/scp-(\d+)(bus|arc|j|ex|d|r|f|splash)$', link)
+        if m2:
+            num, suf = m2.group(1), m2.group(2)
+            if suf in ('j', 'bus'): return 3
+            if suf == 'ex': return 5
+            return 7
+        # 检查国际版后缀（/scp-032-th、/scp-es-234）
+        if re.search(r'/scp-(\d+)-(th|pt|ko|ru|es|fr|pl|de|it|zh|jp)$', link) or \
+           re.search(r'/scp-(es|fr|pl|de|it|ko|th|pt|ru|zh|jp)-\d+', link):
+            return 23
+        # 纯数字 SCP 编号（标准条目）
+        if re.match(r'/scp-\d+$', link):
+            return 1
+        # 剩余的 /scp-xxx 都不是标准 SCP，归为补充资料
+        return parent_type if parent_type else 24
     if link.startswith('/tale:'): return 7
     if link.startswith('/wanderers:'): return 21
     if link.startswith('/fragment:'): return None
