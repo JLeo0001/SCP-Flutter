@@ -1,0 +1,47 @@
+name: scp_app
+description: SCP基金会 - 中分网站移动端阅读工具
+publish_to: 'none'
+version: 1.0.1+1
+
+environment:
+  sdk: ^3.6.2
+
+dependencies:
+  flutter:
+    sdk: flutter
+  # 网络请求
+  http: ^1.2.0
+  # HTML解析
+  html: ^0.15.4
+  # 本地数据库
+  sqflite: ^2.3.0
+  path: ^1.9.0
+  # 本地存储
+  shared_preferences: ^2.2.2
+  # HTML渲染
+  webview_flutter: ^4.8.0
+  # URL启动
+  url_launcher: ^6.2.2
+  # 应用信息
+  package_info_plus: ^8.0.0
+  # 图片选择
+  image_picker: ^1.0.7
+  # 文件路径
+  path_provider: ^2.1.2
+  # 文件选择器（SAF，无需存储权限）
+  file_picker: ^8.3.7
+  # 动态取色 (Material You)
+  dynamic_color: 1.6.9
+  # 权限申请
+  permission_handler: ^11.3.0
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^5.0.0
+
+flutter:
+  uses-material-design: true
+  assets:
+    - assets/scp.db
+    - assets/icons/

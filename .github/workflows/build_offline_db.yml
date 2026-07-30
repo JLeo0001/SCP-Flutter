@@ -1,0 +1,113 @@
+name: Build Offline Content DB
+on:
+  workflow_dispatch:
+    inputs:
+      types:
+        description: '页面类型过滤 (逗号分隔, 空=全部)'
+        required: false
+        default: ''
+      workers:
+        description: '并发线程数'
+        required: false
+        default: '4'
+  schedule:
+    - cron: '0 0 * * 0'   # 每周日 00:00 UTC
+
+permissions:
+  contents: write
+
+env:
+  DB_FILE: offline_content.db
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 360  # 6小时上限
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Check existing release (for resume)
+        id: check_release
+        run: |
+          LATEST=$(gh release view latest --json tagName,createdAt 2>/dev/null || echo "")
+          if [ -n "$LATEST" ]; then
+            echo "has_latest=true" >> $GITHUB_OUTPUT
+            echo "LATEST release: $LATEST"
+          else
+            echo "has_latest=false" >> $GITHUB_OUTPUT
+          fi
+        env:
+          GH_TOKEN: ${{ github.token }}
+
+      - name: Download previous offline DB (resume)
+        if: steps.check_release.outputs.has_latest == 'true'
+        run: |
+          echo "下载上次离线数据库用于增量构建..."
+          gh release download latest --pattern 'offline_content.db' -O offline_content.db.prev 2>/dev/null || true
+          if [ -f offline_content.db.prev ]; then
+            # 如果之前有，使用 --resume 模式
+            cp offline_content.db.prev offline_content.db
+            echo "resume=true" >> $GITHUB_OUTPUT
+            echo "已有前次数据库 $(du -h offline_content.db | cut -f1)"
+          fi
+        env:
+          GH_TOKEN: ${{ github.token }}
+
+      - name: Build offline content DB
+        run: |
+          TYPES="${{ github.event.inputs.types }}"
+          WORKERS="${{ github.event.inputs.workers }}"
+          ARGS=""
+          if [ -n "$TYPES" ]; then
+            ARGS="$ARGS --types $TYPES"
+          fi
+          if [ -f offline_content.db ]; then
+            ARGS="$ARGS --resume"
+          fi
+          python3 scripts/build_offline_db.py \
+            --catalog assets/scp.db \
+            --output offline_content.db \
+            --workers ${WORKERS:-4} \
+            --rate 4 \
+            $ARGS
+
+      - name: Compress for release
+        run: |
+          echo "=== 离线数据库统计 ==="
+          python3 scripts/build_offline_db.py --catalog assets/scp.db --stats-only
+          echo ""
+          python3 scripts/print_db_stats.py offline_content.db
+          echo ""
+          echo "最终文件大小: $(du -h offline_content.db | cut -f1)"
+
+      - name: Create Release
+        id: create_release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: offline-db-${{ github.run_number }}
+          name: "离线数据库 v${{ github.run_number }}"
+          body: |
+            ## 离线内容数据库自动构建 v${{ github.run_number }}
+            
+            - 构建时间: ${{ github.event.repository.updated_at }}
+            - 运行号: ${{ github.run_number }}
+            
+            ### 使用方式
+            1. 下载 `offline_content.db`
+            2. 打开 App →「我的」→「文档缓存」
+            3. 点击「选择文件」，在文件管理器中找到并选中下载的 `.db` 文件
+            4. App 自动导入并加载，之后每次启动自动恢复
+            
+            ### 文件说明
+            - 只含文字内容，不含图片/视频
+            - gzip 压缩存储，支持 FTS5 全文搜索
+            - 内含 CSS/JS 阅读模板
+          files: offline_content.db
+          make_latest: true
+          fail_on_unmatched_files: false

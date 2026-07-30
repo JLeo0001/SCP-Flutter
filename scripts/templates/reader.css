@@ -1,0 +1,55 @@
+/* SCP-Flutter 阅读模板 — 构建时存入 offline_content.db */
+/* 动态样式（字号、行高、主题色等）由 Flutter 端 JS 注入覆盖 */
+* { box-sizing: border-box; }
+body {
+    margin: 0;
+    padding: 16px;
+    font-family: -apple-system, "Noto Sans SC", "PingFang SC", sans-serif;
+    font-size: 16px;
+    line-height: 1.8;
+    color: #333;
+    background: #fff;
+    -webkit-font-smoothing: antialiased;
+    word-break: break-word;
+}
+a { color: #1a73e8; text-decoration: none; }
+a:hover { text-decoration: underline; }
+blockquote {
+    margin: 12px 0;
+    padding: 8px 16px;
+    border-left: 3px solid #1a73e8;
+    background: #f5f5f5;
+    border-radius: 0 4px 4px 0;
+}
+pre {
+    background: #f0f0f0;
+    padding: 12px;
+    border-radius: 6px;
+    overflow-x: auto;
+    font-size: 14px;
+}
+code {
+    background: #f0f0f0;
+    padding: 2px 6px;
+    border-radius: 3px;
+    font-size: 0.9em;
+}
+table { border-collapse: collapse; width: 100%; margin: 12px 0; }
+th, td { border: 1px solid #ddd; padding: 8px; text-align: left; }
+th { background: #f5f5f5; font-weight: 600; }
+img { max-width: 100%; height: auto; }
+hr { border: none; border-top: 1px solid #ddd; margin: 24px 0; }
+h1, h2, h3, h4, h5, h6 { margin: 1.2em 0 0.6em; line-height: 1.3; }
+p { margin: 0.8em 0; text-align: justify; }
+ul, ol { padding-left: 24px; }
+.footnote { font-size: 0.85em; color: #666; }
+.collapsible-block { margin: 8px 0; }
+.collapsible-block-content { padding: 8px; border: 1px solid #ddd; border-radius: 4px; }
+.scp-image-block { margin: 12px 0; text-align: center; }
+.scp-image-caption { font-size: 0.85em; color: #666; margin-top: 4px; }
+/* 进度条 */
+#reading-progress {
+    position: fixed; top: 0; left: 0; height: 3px; background: #1a73e8;
+    z-index: 9999; transition: width 0.3s;
+    border-radius: 0 2px 2px 0;
+}

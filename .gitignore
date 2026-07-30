@@ -1,0 +1,42 @@
+# Flutter
+.dart_tool/
+.packages
+.pub/
+build/
+*.iml
+*.lock
+.flutter-plugins
+.flutter-plugins-dependencies
+
+# Android
+android/.gradle/
+android/local.properties
+android/key.properties
+
+# Keystore
+publish.keystore.old
+*.jks
+
+# iOS
+ios/Pods/
+ios/.symlinks/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# Pycache
+__pycache__/
+*.pyc
+
+# 离线内容数据库（~200MB，不可内置到APK，通过GitHub Release分发）
+offline_content.db
+*.db.prev
+
+# OS
+.DS_Store
+Thumbs.db
+demo_offline.db

@@ -1,0 +1,30 @@
+name: Sync SCP Catalog
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: '0 12 * * 6'
+
+permissions:
+  contents: write
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Run sync
+        run: |
+          python3 scripts/sync_catalog.py
+
+      - name: Fetch full titles
+        run: |
+          python3 scripts/fetch_titles.py
+
+      - name: Commit updated database
+        run: |
+          git config user.name "JLeo0001"
+          git config user.email "JLeo0001@users.noreply.github.com"
+          git add assets/scp.db
+          git diff --cached --quiet || git commit -m "chore: 自动同步Wikidot目录 [skip ci]"
+          git push
