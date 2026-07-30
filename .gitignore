@@ -1,0 +1,33 @@
+# Flutter
+.dart_tool/
+.packages
+.pub/
+build/
+*.iml
+*.lock
+.flutter-plugins
+.flutter-plugins-dependencies
+
+# Android
+android/.gradle/
+android/local.properties
+android/key.properties
+
+# Keystore
+publish.keystore.old
+*.jks
+
+# iOS
+ios/Pods/
+ios/.symlinks/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db

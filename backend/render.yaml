@@ -1,0 +1,23 @@
+# Render.com 部署配置
+# 1. 在 https://render.com 注册（GitHub 登录）
+# 2. 点击 "New +" → "Web Service"
+# 3. 连接 SCP-Flutter 仓库
+# 4. 选择 "Existing Dockerfile" 或：
+#    - Name: scp-wikidot-api
+#    - Environment: Python 3
+#    - Build Command: pip install -r backend/requirements.txt
+#    - Start Command: python3 backend/server.py
+#    - Instance Type: Free
+
+services:
+  - type: web
+    name: scp-wikidot-api
+    env: python
+    region: singapore  # 新加坡节点，离中分官网较近
+    plan: free
+    buildCommand: pip install -r backend/requirements.txt
+    startCommand: python3 backend/server.py
+    healthCheckPath: /
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.12.0

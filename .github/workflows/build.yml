@@ -1,0 +1,125 @@
+name: Build SCP-Flutter APK
+
+on:
+  push:
+    branches: [main]
+    tags: ['v*']
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+# ── 并发控制：同一分支新提交自动取消旧运行 ──
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  FLUTTER_VERSION: '3.27.x'
+
+jobs:
+  # ── 版本检测 ──
+  version:
+    name: Detect version
+    runs-on: ubuntu-latest
+    outputs:
+      tag: ${{ steps.v.outputs.tag }}
+    steps:
+      - uses: actions/checkout@v5
+      - id: v
+        run: |
+          if [[ "${{ github.ref }}" == refs/tags/v* ]]; then
+            echo "tag=${GITHUB_REF_NAME}" >> "$GITHUB_OUTPUT"
+          else
+            VER=$(grep '^version: ' pubspec.yaml | sed 's/version: //')
+            echo "tag=v$VER" >> "$GITHUB_OUTPUT"
+          fi
+
+  # ── Android 构建 ──
+  android:
+    name: 📱 Android APK
+    needs: version
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Setup Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          flutter-version: ${{ env.FLUTTER_VERSION }}
+          channel: stable
+          cache: true
+
+      - name: Setup Java
+        uses: actions/setup-java@v5
+        with:
+          distribution: zulu
+          java-version: 21
+
+      - name: Cache Gradle
+        uses: actions/cache@v5
+        with:
+          path: |
+            ~/.gradle/caches
+            ~/.gradle/wrapper
+          key: gradle-${{ runner.os }}-${{ hashFiles('android/**/*.gradle*', 'android/**/gradle-wrapper.properties') }}
+          restore-keys: gradle-${{ runner.os }}-
+
+      - name: Cache pub
+        uses: actions/cache@v5
+        with:
+          path: ~/.pub-cache
+          key: pub-${{ runner.os }}-${{ hashFiles('pubspec.yaml') }}
+          restore-keys: pub-${{ runner.os }}-
+
+      - name: Install dependencies
+        run: flutter pub get
+
+      - name: Analyze
+        run: flutter analyze
+        continue-on-error: true
+
+      - name: Setup signing
+        run: |
+          if [ -n "${{ secrets.KEYSTORE_BASE64 }}" ]; then
+            echo "Using CI keystore from secrets"
+            echo '${{ secrets.KEYSTORE_BASE64 }}' | base64 -d > publish.keystore
+            echo 'storePassword=${{ secrets.STORE_PASSWORD }}' >> android/key.properties
+            echo 'keyPassword=${{ secrets.KEY_PASSWORD }}' >> android/key.properties
+            echo 'keyAlias=${{ secrets.KEY_ALIAS }}' >> android/key.properties
+            echo 'storeFile=../../publish.keystore' >> android/key.properties
+          fi
+          if [ ! -f android/key.properties ] && [ -f publish.keystore ]; then
+            echo 'storePassword=123456zxl' > android/key.properties
+            echo 'keyPassword=123456zxl' >> android/key.properties
+            echo 'keyAlias=appkey' >> android/key.properties
+            echo 'storeFile=../../publish.keystore' >> android/key.properties
+            echo "Created key.properties from repo keystore"
+          fi
+
+      - name: Build universal APK
+        run: flutter build apk --release --no-tree-shake-icons
+
+      - name: Build split-ABI APKs
+        run: flutter build apk --release --split-per-abi --no-tree-shake-icons
+
+      - name: Rename & organize APKs
+        run: |
+          VER=${{ needs.version.outputs.tag }}
+          mkdir -p output
+          # Universal (all ABIs)
+          cp build/app/outputs/flutter-apk/app-release.apk \
+             output/SCP-Flutter-${VER}-universal.apk
+          # Per-ABI
+          cp build/app/outputs/flutter-apk/app-armeabi-v7a-release.apk \
+             output/SCP-Flutter-${VER}-armeabi-v7a.apk 2>/dev/null || true
+          cp build/app/outputs/flutter-apk/app-arm64-v8a-release.apk \
+             output/SCP-Flutter-${VER}-arm64-v8a.apk 2>/dev/null || true
+          ls -lh output/
+
+      - name: Upload APK artifacts
+        uses: actions/upload-artifact@v5
+        with:
+          name: SCP-Flutter-${{ needs.version.outputs.tag }}
+          path: output/*.apk
+          compression-level: 0
+          retention-days: 30
