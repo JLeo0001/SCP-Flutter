@@ -500,6 +500,55 @@ class OfflineDbBuilder:
                 conn.commit()
                 self._pending_commits = 0
 
+        # ═══ 第二轮：重试失败的页面 ═══
+        if self.stats['failed'] > 0:
+            # 找出真正失败的链接
+            all_links_set = set(all_links)
+            existing = self.get_existing_links(conn)
+            failed_links = list(all_links_set - existing)
+            if failed_links:
+                print(f'\n{"="*50}')
+                print(f'第二轮重试: {len(failed_links)} 个失败页面（降速到 2/s）')
+                random.shuffle(failed_links)
+
+                # 降速重试（降低频率避免触发反爬）
+                old_rate = _rate_limiter.rate
+                _rate_limiter.rate = 2
+                old_burst = _rate_limiter.burst
+                _rate_limiter.burst = 1
+
+                retry_failed = self.stats['failed']
+                self.stats['failed'] = 0  # 重置计数
+                total2 = len(failed_links)
+
+                import concurrent.futures
+                with concurrent.futures.ThreadPoolExecutor(
+                        max_workers=min(self.workers, 2)) as executor:
+                    futures = {}
+                    for link in failed_links:
+                        if link in self._page_cache:
+                            future = executor.submit(
+                                self.process_page, link, self._page_cache[link], conn)
+                            futures[future] = link
+
+                    done = 0
+                    for future in concurrent.futures.as_completed(futures):
+                        done += 1
+                        if done % 25 == 0 or done == total2:
+                            print(
+                                f'  重试 [{done}/{total2}] '
+                                f'✓{self.stats["fetched"]} ✗{self.stats["failed"]}',
+                                flush=True)
+
+                # 恢复速率
+                _rate_limiter.rate = old_rate
+                _rate_limiter.burst = old_burst
+
+                with self.commit_lock:
+                    if self._pending_commits > 0:
+                        conn.commit()
+                        self._pending_commits = 0
+
         self.build_fts_index(conn)
 
         # 更新元数据
