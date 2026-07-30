@@ -472,11 +472,11 @@ $customFontFaces
     z-index: 99998; transition: width 0.3s ease;
   }
   #_ruler {
-    position: fixed; left: 0; right: 0; height: 1px;
+    position: fixed; left: 0; right: 0; height: 2px;
     background: $linkColor; opacity: 0; pointer-events: none;
     z-index: 99997; transition: opacity 0.3s ease;
   }
-  #_ruler.show { opacity: 0.35; }
+  #_ruler.show { opacity: 0.5; }
   @media (prefers-reduced-motion: reduce) {
     *, *::before, *::after { transition-duration: 0.01ms !important; }
   }
@@ -581,6 +581,7 @@ document.addEventListener('click',function(e){
 $darkFixJs
 </script></head><body>
 <div id="_progress"></div>
+<div id="_ruler"></div>
 $content
 </body></html>''';
 
