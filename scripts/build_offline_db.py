@@ -276,7 +276,7 @@ class OfflineDbBuilder:
     def init_database(self):
         """创建或打开输出数据库"""
         exists = os.path.exists(self.output_path)
-        conn = sqlite3.connect(self.output_path)
+        conn = sqlite3.connect(self.output_path, check_same_thread=False)
         conn.execute('PRAGMA journal_mode=WAL')
         conn.execute('PRAGMA synchronous=OFF')
         conn.execute('PRAGMA cache_size=-64000')
@@ -434,7 +434,7 @@ class OfflineDbBuilder:
                         self._pending_commits = 0
                 return  # 成功
 
-            except Exception:
+            except Exception as e:
                 if attempt == 0:
                     continue  # 重试 1 次
                 with self.lock:
