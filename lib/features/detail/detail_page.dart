@@ -904,6 +904,10 @@ $content
               switch (v) {
                 case 'like': _toggleLike(); break;
                 case 'later': _toggleLater(); break;
+                case 'refresh':
+                  setState(() { _loading = true; _detailHtml = null; _webController = null; });
+                  _loadData();
+                  break;
                 case 'browser': _openInBrowser(); break;
                 case 'copy': _copyLink(); break;
                 case 'read': _markRead(); break;
@@ -918,6 +922,9 @@ $content
                 Icon(Icons.bookmark_border, size: 20, color: Theme.of(ctx).colorScheme.onSurface), SizedBox(width: 8), Text(_isInLater ? '移出待读' : '加入待读'),
               ])),
               const PopupMenuDivider(),
+              PopupMenuItem(value: 'refresh', child: Row(children: [
+                Icon(Icons.refresh, size: 20, color: Theme.of(ctx).colorScheme.onSurface), SizedBox(width: 8), Text('刷新'),
+              ])),
               PopupMenuItem(value: 'browser', child: Row(children: [
                 Icon(Icons.open_in_browser, size: 20, color: Theme.of(ctx).colorScheme.onSurface), SizedBox(width: 8), Text('浏览器打开'),
               ])),
@@ -951,7 +958,18 @@ $content
                         style: TextStyle(color: Theme.of(context).brightness == Brightness.dark
                             ? Colors.white54 : Colors.grey.shade600)),
                     const SizedBox(height: 16),
-                    ElevatedButton(onPressed: _openInBrowser, child: const Text('在浏览器中打开')),
+                    Row(mainAxisAlignment: MainAxisAlignment.center, children: [
+                      ElevatedButton.icon(
+                        icon: const Icon(Icons.refresh, size: 18),
+                        onPressed: () {
+                          setState(() { _loading = true; _detailHtml = null; });
+                          _loadData();
+                        },
+                        label: const Text('刷新'),
+                      ),
+                      const SizedBox(width: 12),
+                      ElevatedButton(onPressed: _openInBrowser, child: const Text('在浏览器中打开')),
+                    ]),
                   ],
                 ))
               : _webController != null
