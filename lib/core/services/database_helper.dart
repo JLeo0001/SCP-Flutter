@@ -255,6 +255,14 @@ class DatabaseHelper {
 
   // ── 阅读记录 ──
 
+  /// 指定类型的记录数量（0=历史 1=待读）
+  static Future<int> getRecordCount(int listType) async {
+    final db = await getDataDb();
+    final r = await db.rawQuery(
+        'SELECT COUNT(*) as c FROM records WHERE list_type = ?', [listType]);
+    return (r.first['c'] ?? 0) as int;
+  }
+
   static Future<List<ScpRecordModel>> getRecords(int listType) async {
     final db = await getDataDb();
     final maps = await db.query('records', where: 'list_type = ?', whereArgs: [listType], orderBy: 'view_time DESC');

@@ -9,21 +9,26 @@ import '../later/later_page.dart';
 import '../../core/theme/app_theme.dart';
 import '../../core/services/preference_service.dart';
 import '../../core/services/database_helper.dart';
+import '../../core/utils/route_observer.dart';
 import '../../core/constants.dart';
 import '../detail/detail_page.dart';
 
 /// 用户页 — 对应 UserFragment.kt
 class UserPage extends StatefulWidget {
-  const UserPage({super.key});
+  /// 主框架底部 tab 索引通知 — 用于切回本页时刷新统计数据
+  final ValueNotifier<int>? tabIndex;
+
+  const UserPage({super.key, this.tabIndex});
 
   @override
   State<UserPage> createState() => _UserPageState();
 }
 
-class _UserPageState extends State<UserPage> with WidgetsBindingObserver {
+class _UserPageState extends State<UserPage>
+    with WidgetsBindingObserver, RouteAware {
   File? _avatarFile;
   int _readCount = 0;
-  int _likeCount = 0;
+  int _laterCount = 0;
   final List<Map<String, String>> _recentHistory = [];
 
   static const _jobs = [
@@ -57,14 +62,26 @@ class _UserPageState extends State<UserPage> with WidgetsBindingObserver {
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
+    widget.tabIndex?.addListener(_onTabChanged);
     _userId = _initUserId();
     _loadAvatar();
     _loadStats();
   }
 
   @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    final route = ModalRoute.of(context);
+    if (route is PageRoute) {
+      RouteObservers.observer.subscribe(this, route);
+    }
+  }
+
+  @override
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
+    RouteObservers.observer.unsubscribe(this);
+    widget.tabIndex?.removeListener(_onTabChanged);
     super.dispose();
   }
 
@@ -75,9 +92,15 @@ class _UserPageState extends State<UserPage> with WidgetsBindingObserver {
     }
   }
 
-  /// 每次页面展示时刷新数据（去掉节流，保证实时更新）
-  void _autoRefresh() {
-    WidgetsBinding.instance.addPostFrameCallback((_) { _loadStats(); });
+  /// 从详情页等上层路由返回时刷新
+  @override
+  void didPopNext() {
+    _loadStats();
+  }
+
+  /// 底部 tab 切换时刷新（切回本页即更新，覆盖 IndexedStack 不重建子页的情况）
+  void _onTabChanged() {
+    if (mounted) _loadStats();
   }
 
   void _loadAvatar() {
@@ -93,12 +116,12 @@ class _UserPageState extends State<UserPage> with WidgetsBindingObserver {
   Future<void> _loadStats() async {
     try {
       final rc = await DatabaseHelper.getReadCount();
-      final lc = await DatabaseHelper.getLikeCount();
+      final lc = await DatabaseHelper.getRecordCount(SCPConstants.laterType);
       final records = await DatabaseHelper.getRecords(SCPConstants.historyType);
       if (mounted) {
         setState(() {
           _readCount = rc;
-          _likeCount = lc;
+          _laterCount = lc;
           _recentHistory
             ..clear()
             ..addAll(records.take(3).map((r) => {
@@ -262,7 +285,6 @@ class _UserPageState extends State<UserPage> with WidgetsBindingObserver {
 
   @override
   Widget build(BuildContext context) {
-    _autoRefresh();
     final theme = Theme.of(context);
     final cs = theme.colorScheme;
     final nickname = PreferenceService.getNickname();
@@ -382,7 +404,7 @@ class _UserPageState extends State<UserPage> with WidgetsBindingObserver {
               children: [
                 _statChip(cs, Icons.menu_book, '已研究项目', _readCount, 2),
                 const SizedBox(width: 12),
-                _statChip(cs, Icons.bookmark, '已跟踪项目', _likeCount, 2),
+                _statChip(cs, Icons.bookmark, '已跟踪项目', _laterCount, 0),
               ],
             ),
           ],
@@ -391,12 +413,13 @@ class _UserPageState extends State<UserPage> with WidgetsBindingObserver {
     );
   }
 
+  /// 统计卡片 — 点击跳转到对应的列表页（2=已读, 0=待读）
   Widget _statChip(
-      ColorScheme cs, IconData icon, String label, int count, int tabIndex) {
+      ColorScheme cs, IconData icon, String label, int count, int initialTab) {
     return Expanded(
       child: GestureDetector(
         onTap: () => Navigator.push(context,
-            MaterialPageRoute(builder: (_) => LaterPage(initialTab: tabIndex))),
+            MaterialPageRoute(builder: (_) => LaterPage(initialTab: initialTab))),
         child: Container(
           padding: const EdgeInsets.symmetric(vertical: 10),
           decoration: BoxDecoration(

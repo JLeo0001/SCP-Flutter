@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:dynamic_color/dynamic_color.dart';
 import 'core/theme/app_theme.dart';
 import 'core/backend/backend_service.dart';
+import 'core/utils/route_observer.dart';
 import 'features/home/home_page.dart';
 import 'features/later/later_page.dart';
 import 'features/user/user_page.dart';
@@ -18,10 +19,13 @@ class _ScpAppState extends State<ScpApp> with WidgetsBindingObserver {
   int _currentIndex = 0;
   int _themeTick = 0; // 每次主题变化 +1，触发热区外重建
 
-  final List<Widget> _pages = const [
-    HomePage(),
-    LaterPage(),
-    UserPage(),
+  /// 底部 tab 索引通知 — 供各页面感知"回到本页"并刷新数据
+  final ValueNotifier<int> _tabIndex = ValueNotifier<int>(0);
+
+  late final List<Widget> _pages = [
+    const HomePage(),
+    const LaterPage(),
+    UserPage(tabIndex: _tabIndex),
   ];
 
   @override
@@ -37,6 +41,7 @@ class _ScpAppState extends State<ScpApp> with WidgetsBindingObserver {
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
     AppTheme.setOnChanged(() {});
+    _tabIndex.dispose();
     super.dispose();
   }
 
@@ -65,7 +70,10 @@ class _ScpAppState extends State<ScpApp> with WidgetsBindingObserver {
           lightScheme: light,
           darkScheme: dark,
           currentIndex: _currentIndex,
-          onTabChange: (i) => setState(() => _currentIndex = i),
+          onTabChange: (i) {
+            setState(() => _currentIndex = i);
+            _tabIndex.value = i;
+          },
           pages: _pages,
         );
       },
@@ -95,6 +103,7 @@ class _ThemeApp extends StatelessWidget {
     return MaterialApp(
       title: 'SCP基金会',
       debugShowCheckedModeBanner: false,
+      navigatorObservers: [RouteObservers.observer],
       theme: _buildTheme(lightScheme, Brightness.light),
       darkTheme: _buildTheme(darkScheme, Brightness.dark),
       themeMode: _resolveThemeMode(),
