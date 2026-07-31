@@ -206,6 +206,12 @@ class _DetailPageState extends State<DetailPage> with WidgetsBindingObserver {
     } else {
       fontFamilyCss = '-apple-system,"Noto Sans SC","PingFang SC",sans-serif';
     }
+    // 字重映射 + 仿粗兜底：Android WebView 的系统 CJK 字体常忽略 font-weight
+    // （尤其老设备只提供单一字重），用 -webkit-text-stroke 模拟加粗保证可见效果。
+    final fwIndex = PreferenceService.getFontWeight().clamp(0, 3);
+    final fw = [400, 500, 600, 700][fwIndex];
+    final fwStroke = fw > 400 ? '${(0.02 + (fw - 500) / 100 * 0.015).toStringAsFixed(3)}em' : '0';
+
     final int rt = PreferenceService.getReadingTheme();
     // 颜色方案: 0=auto 1=light 2=sepia 3=dark 4=pure_dark
     bool useDark = rt == 3 || rt == 4 || (rt == 0 && isDark);
@@ -265,7 +271,9 @@ $customFontFaces
   body {
     font-family: $fontFamilyCss;
     font-size: ${ts}px; line-height: ${PreferenceService.getLineHeight()};
-    font-weight: ${[400, 500, 600, 700][PreferenceService.getFontWeight()]};
+    font-weight: $fw;
+    -webkit-text-stroke: $fwStroke;
+    font-synthesis: weight;
     color: $textColor; background: $bgColor;
     padding: ${PreferenceService.getPagePadding() == 0 ? '10px' : PreferenceService.getPagePadding() == 2 ? '24px' : '16px'}; margin: 0;
     word-wrap: break-word; overflow-wrap: break-word;
@@ -497,8 +505,10 @@ $customFontFaces
   }
 </style>
 <script>
-// ── 初始化（页面加载时执行）──
-(function(){
+// ── 初始化（DOM 就绪后执行）──
+// 脚本位于 <head>，解析时 <body> 尚未生成，直接 getElementById 会拿到 null；
+// 必须等 DOMContentLoaded 之后才能操作 _progress / _ruler。
+function _initReader(){
   var prog = document.getElementById('_progress');
   var ruler = document.getElementById('_ruler');
   var rulerOn = ${PreferenceService.getReadingRuler() ? 'true' : 'false'};
@@ -506,6 +516,7 @@ $customFontFaces
   // reading progress bar
   var ticking = false;
   function updateProgress(){
+    if(!prog)return;
     var h = document.documentElement.scrollHeight - window.innerHeight;
     if(h<=0)return;
     var p = Math.min(100, (window.scrollY/h)*100);
@@ -526,8 +537,13 @@ $customFontFaces
   }
   window.addEventListener('scroll',updateRuler,{passive:true});
   updateRuler();
-
-})();// ── 点击事件 ──
+}
+if(document.readyState==='loading'){
+  document.addEventListener('DOMContentLoaded',_initReader);
+}else{
+  _initReader();
+}
+// ── 点击事件 ──
 document.addEventListener('click',function(e){
   // collapsible blocks
   var f=e.target.closest('.collapsible-block-folded');
