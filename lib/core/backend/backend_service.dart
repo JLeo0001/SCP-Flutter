@@ -149,7 +149,7 @@ class BackendService {
     final name = link.startsWith('/') ? link.substring(1) : link;
     final preferOffline = PreferenceService.getPreferOffline();
 
-    // ═══ 第1层: 离线库（仅开关ON时）═══
+    // ═══ 第1层: 离线库（仅开关ON时优先使用）═══
     if (preferOffline && isOfflineAvailable) {
       try {
         final html = await OfflineContentDb.getPageHtml(name);
@@ -179,12 +179,35 @@ class BackendService {
       }
     } catch (_) {}
 
-    // ═══ 第3层: 在线拉取（最终通路）═══
-    final page = await _scraper.fetchPage(name);
+    // ═══ 第3层: 在线拉取（有网时走这里）═══
     try {
-      await DatabaseHelper.cachePage(name, page.content, page.tags.join(','));
-    } catch (_) {}
-    return page;
+      final page = await _scraper.fetchPage(name);
+      try {
+        await DatabaseHelper.cachePage(name, page.content, page.tags.join(','));
+      } catch (_) {}
+      return page;
+    } catch (e) {
+      // ═══ 第4层: 网络失败（断网等）→ 离线库兜底 ═══
+      // 无论开关 ON/OFF，断网时离线库都是最后可用的数据源
+      if (isOfflineAvailable) {
+        try {
+          final html = await OfflineContentDb.getPageHtml(name);
+          if (html != null && html.isNotEmpty) {
+            final info = await OfflineContentDb.getPageInfo(name);
+            return PageData(
+              link: name,
+              title: info?['title'] as String? ?? '',
+              content: html,
+              tags: (info?['tags'] as String? ?? '').split(',')
+                  .where((t) => t.isNotEmpty).toList(),
+              html: html,
+            );
+          }
+        } catch (_) {}
+      }
+      // 网络不通 & 离线也没有 → 如实报错
+      rethrow;
+    }
   }
 
   // ═══════════════════════════════════════════
