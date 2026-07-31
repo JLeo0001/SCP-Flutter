@@ -1,65 +1,109 @@
-/// 简繁转换器 — 常用字符映射表
-class ChineseConverter {
-  static final s2tMap = <String, String>{
-    '为':'爲','们':'們','个':'個','动':'動','对':'對','从':'從',
-    '体':'體','来':'來','说':'說','书':'書','国':'國','时':'時','间':'間','门':'門',
-    '开':'開','关':'關','学':'學','习':'習','见':'見','长':'長','风':'風','飞':'飛',
-    '马':'馬','鱼':'魚','鸟':'鳥','龙':'龍','点':'點','线':'線',
-    '话':'話','语':'語','认':'認','识':'識','读':'讀','写':'寫','笔':'筆','画':'畫',
-    '声':'聲','质':'質','数':'數','据':'據','记':'記','录':'錄','级':'級',
-    '经':'經','济':'濟','过':'過','进':'進','还':'還','这':'這',
-    '么':'麼','吗':'嗎','让':'讓','给':'給','与':'與','处':'處','后':'後',
-    '东':'東','西':'西','南':'南','北':'北',
-    '现':'現','实':'實','众':'眾','术':'術','党':'黨','军':'軍','队':'隊',
-    '战':'戰','争':'爭','胜':'勝','败':'敗','结':'結','构':'構','设':'設','计':'計',
-    '划':'劃','网':'網','络':'絡','节':'節','验':'驗','检':'檢','测':'測','报':'報',
-    '资':'資','输':'輸','转':'轉','导':'導','软':'軟','盘':'盤','编':'編','译':'譯',
-    '码':'碼','错':'錯','误':'誤','删':'刪','权':'權','专':'專','价':'價','钱':'錢',
-    '币':'幣','银':'銀','厂':'廠','场':'場','医':'醫','药':'藥','乐':'樂','欢':'歡',
-    '爱':'愛','惊':'驚','惧':'懼','张':'張','紧':'緊','险':'險','护':'護','帮':'幫',
-    '请':'請','师':'師','儿':'兒','亲':'親','访':'訪','问':'問','谈':'談','论':'論',
-    '议':'議','决':'決','义':'義','愿':'願','离':'離','别':'別','约':'約','图':'圖',
-    '电':'電','视':'視','频':'頻','臺':'台','址':'址','页':'頁','键':'鍵','标':'標',
-    '单':'單','双':'雙','栏':'欄','宽':'寬','窄':'窄','浅':'淺','旧':'舊','当':'當',
-    '极':'極','础':'礎','类':'類','种':'種','样':'樣','态':'態','势':'勢','况':'況',
-    '状':'狀','戏':'戲','词':'詞','诗':'詩','节':'節','艺':'藝','备':'備','製':'制',
-    '优':'優','坏':'壞','虚':'虛','圆':'圓','压':'壓','强':'強','韧':'韌','干':'乾',
-    '湿':'濕','热':'熱','冻':'凍','烧':'燒','炖':'燉','焖':'燜','酱':'醬','盐':'鹽',
-    '面':'麵','馒':'饅','头':'頭','饭':'飯','汤':'湯','咸':'鹹','鲜':'鮮','胆':'膽',
-    '肠':'腸','脑':'腦','体':'體','细':'細','胞':'胞','组':'組','织':'織','经':'經',
-    '络':'絡','脉':'脈','肤':'膚','踪':'蹤','跡':'迹',
-    '發':'发','髮':'发','復':'复','複':'复','鬥':'斗','儘':'尽','盡':'尽',
-    '曆':'历','歷':'历','鍾':'钟','鐘':'钟','裏':'里','裡':'里',
-    '匯':'汇','彙':'汇','纔':'才','鬍':'胡','鬚':'须',
-    '喫':'吃','傘':'伞','萬':'万','葉':'叶','蘇':'苏','囌':'苏',
-    '臺':'台','颱':'台','檯':'台','鬆':'松','穀':'谷','穀物':'谷物',
-    '醜':'丑','範':'范','範例':'范例','複印':'复印','複雜':'复杂',
-    '瀋':'沈','瀋陽':'沈阳','鬱':'郁','鬱悶':'郁闷','餘':'余',
-    '遊':'游','遊戲':'游戏','遊客':'游客','準':'准','準備':'准备',
-    '製':'制','製作':'制作','製造':'制造','徵':'征','徵求':'征求',
-    '證':'证','證明':'证明','憑':'凭','憑借':'凭借',
-  };
+import 'dart:convert';
+import 'package:flutter/services.dart';
 
-  static String toTraditional(String text) {
-    final buf = StringBuffer();
-    for (var i = 0; i < text.length; i++) {
-      final c = text[i];
-      buf.write(s2tMap[c] ?? c);
-    }
-    return buf.toString();
+/// 简繁转换器 — 基于 OpenCC 官方词典（Apache-2.0）
+///
+/// 词典文件（assets/data/，来自 BYVoid/OpenCC 发布版 opencc-data 1.4.1）：
+///   - TSCharacters.txt / TSPhrases.txt  : 繁→简（单字 + 短语）
+///   - STCharacters.txt / STPhrases.txt  : 简→繁（单字 + 短语）
+/// 算法与 OpenCC 标准配置一致：先做短语最长匹配（forward maximum matching），
+/// 未命中短语时再查单字词典；多值条目取第一个映射（OpenCC 默认行为）。
+class ChineseConverter {
+  static const _assetDir = 'assets/data';
+
+  // 繁→简
+  static Map<String, String>? _t2sChars;
+  static Map<String, String>? _t2sPhrases;
+  // 简→繁
+  static Map<String, String>? _s2tChars;
+  static Map<String, String>? _s2tPhrases;
+
+  static int _maxPhraseLen = 1;
+  static Set<String>? _phraseStarts;
+  static bool _loaded = false;
+  static Future<void>? _loading;
+
+  /// 确保词典已加载（幂等；首次调用异步解析，之后直接返回）。
+  /// 使用转换前先 await 一次。
+  static Future<void> ensureLoaded() {
+    if (_loaded) return Future.value();
+    return _loading ??= _load();
   }
 
-  static final Map<String, String> _t2s = <String, String>{};
-  static String toSimplified(String text) {
-    if (_t2s.isEmpty) {
-      for (final entry in s2tMap.entries) {
-        _t2s[entry.value] = entry.key;
+  static Future<void> _load() async {
+    try {
+      _t2sPhrases = await _loadDict('$_assetDir/TSPhrases.txt');
+      _t2sChars = await _loadDict('$_assetDir/TSCharacters.txt');
+      _s2tPhrases = await _loadDict('$_assetDir/STPhrases.txt');
+      _s2tChars = await _loadDict('$_assetDir/STCharacters.txt');
+
+      final starts = <String>{};
+      for (final map in [_t2sPhrases!, _s2tPhrases!]) {
+        for (final key in map.keys) {
+          if (key.length > _maxPhraseLen) _maxPhraseLen = key.length;
+          starts.add(key[0]);
+        }
       }
+      _phraseStarts = starts;
+      _loaded = true;
+    } finally {
+      _loading = null;
     }
+  }
+
+  /// 解析 OpenCC 词典文本：`key\tvalue1 value2 ...`，取第一个映射。
+  static Future<Map<String, String>> _loadDict(String path) async {
+    final text = await rootBundle.loadString(path);
+    final map = <String, String>{};
+    final lines = const LineSplitter().convert(text);
+    for (final line in lines) {
+      if (line.isEmpty || line.startsWith('#')) continue;
+      final tab = line.indexOf('\t');
+      if (tab <= 0) continue;
+      final key = line.substring(0, tab);
+      final rest = line.substring(tab + 1);
+      final sp = rest.indexOf(' ');
+      map[key] = sp == -1 ? rest : rest.substring(0, sp);
+    }
+    return map;
+  }
+
+  static String toTraditional(String text) {
+    if (!_loaded) return text;
+    return _convert(text, _s2tPhrases!, _s2tChars!);
+  }
+
+  static String toSimplified(String text) {
+    if (!_loaded) return text;
+    return _convert(text, _t2sPhrases!, _t2sChars!);
+  }
+
+  static String _convert(
+      String text, Map<String, String> phrases, Map<String, String> chars) {
     final buf = StringBuffer();
-    for (var i = 0; i < text.length; i++) {
+    final starts = _phraseStarts!;
+    final n = text.length;
+    int i = 0;
+    while (i < n) {
+      // 短语最长匹配：只有当前字符能作为某条短语开头时才扫描
+      if (starts.contains(text[i])) {
+        final maxTry = (n - i) < _maxPhraseLen ? (n - i) : _maxPhraseLen;
+        String? hit;
+        for (int l = maxTry; l >= 2; l--) {
+          final v = phrases[text.substring(i, i + l)];
+          if (v != null) {
+            hit = v;
+            buf.write(v);
+            i += l;
+            break;
+          }
+        }
+        if (hit != null) continue;
+      }
+      // 单字兜底
       final c = text[i];
-      buf.write(_t2s[c] ?? c);
+      buf.write(chars[c] ?? c);
+      i++;
     }
     return buf.toString();
   }

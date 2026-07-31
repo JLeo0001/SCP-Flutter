@@ -137,6 +137,8 @@ class _AboutPageState extends State<AboutPage> {
                     '除非特别注明，文章内容采用CC-BY-SA 3.0协议\n'
                     'https://creativecommons.org/licenses/by-sa/3.0/deed.zh\n\n'
                     '欲了解更多信息，查看授权指南：\n'
+                    '简繁转换词典基于OpenCC（Apache-2.0）\\n'
+                    'https://github.com/BYVoid/OpenCC\\n\\n'
                     'http://scp-wiki-cn.wikidot.com/licensing-guide',
                     style: TextStyle(fontSize: 13, height: 1.5, color: cs.onSurface.withValues(alpha: 0.8)),
                   ),

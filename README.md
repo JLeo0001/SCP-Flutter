@@ -222,11 +222,12 @@ lib/
 
 - [SCP基金会中国分部](http://scp-wiki-cn.wikidot.com) — 内容来源
 - [zhufree/SCP-Android](https://github.com/zhufree/SCP-Android) — 原Android版启发
+- [OpenCC](https://github.com/BYVoid/OpenCC) — 简繁转换词典（Apache-2.0）
 - 所有SCP基金会贡献者
 
 ## 📄 许可
 
-应用内内容遵循 **CC-BY-SA 3.0** 协议。
+应用内内容遵循 **CC-BY-SA 3.0** 协议；简繁转换词典基于 **OpenCC**（[Apache-2.0](https://www.apache.org/licenses/LICENSE-2.0)）数据。
 
 ---
 

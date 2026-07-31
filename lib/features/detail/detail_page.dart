@@ -171,6 +171,7 @@ class _DetailPageState extends State<DetailPage> with WidgetsBindingObserver {
         '');
 
     // 简繁切换：仅转换标签外文本，避免破坏HTML
+    await ChineseConverter.ensureLoaded();
     final hanzType = PreferenceService.getHanzType();
     if (hanzType == 1) {
       // 用户选择繁体 → 简→繁转换（若已是繁体则是空操作）
