@@ -197,6 +197,21 @@ class _ReadingSettingsPanelState extends State<ReadingSettingsPanel> {
     widget.onChanged(SettingChange.toggle);
   }
 
+  /// 恢复全部阅读设置为默认值（与 PreferenceService 各项 ?? 默认值一致）
+  void _resetDefaults() {
+    setState(() {
+      _textSize = 16; _fontFamily = 0; _lineHeight = 1.8; _fontWeight = 0;
+      _codeFontScale = 0.9; _headingScale = 1.0; _readingTheme = ReadingTheme.auto;
+      _textAlign = 1; _paraSpacing = 1.0; _pagePadding = 1;
+      _firstLineIndent = false; _blockquoteStyle = BlockquoteStyle.accent;
+      _imageWidth = 0; _showImages = true; _hanzType = 0; _readingRuler = false;
+      _autoScroll = false; _autoSpeed = 2.0; _keepScreenOn = false; _fullScreen = false;
+    });
+    _saveVisual();
+    _saveToggle();
+    _snack('已恢复默认设置');
+  }
+
   @override
   Widget build(BuildContext context) {
     final cs = Theme.of(context).colorScheme;
@@ -213,8 +228,20 @@ class _ReadingSettingsPanelState extends State<ReadingSettingsPanel> {
           Center(child: Container(width: 40, height: 4,
               decoration: BoxDecoration(color: cs.onSurface.withValues(alpha: 0.2), borderRadius: BorderRadius.circular(2)))),
           const SizedBox(height: 16),
-          Text('阅读设置', style: TextStyle(fontSize: 18, fontWeight: FontWeight.w600, color: cs.onSurface)),
-          const SizedBox(height: 20),
+          Row(children: [
+            Text('阅读设置', style: TextStyle(fontSize: 18, fontWeight: FontWeight.w600, color: cs.onSurface)),
+            const Spacer(),
+            TextButton.icon(
+              icon: const Icon(Icons.restart_alt, size: 16),
+              label: const Text('恢复默认', style: TextStyle(fontSize: 12)),
+              onPressed: _resetDefaults,
+              style: TextButton.styleFrom(
+                padding: const EdgeInsets.symmetric(horizontal: 8),
+                minimumSize: const Size(0, 32),
+              ),
+            ),
+          ]),
+          const SizedBox(height: 12),
 
           // ═══ 阅读主题 ═══
           _sectionTitle('阅读主题', cs),

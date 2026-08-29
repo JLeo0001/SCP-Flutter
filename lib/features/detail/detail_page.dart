@@ -41,11 +41,11 @@ class _DetailPageState extends State<DetailPage> with WidgetsBindingObserver {
   bool _isRead = false;
   bool _isInLater = false;
   bool _laterChecked = false;
-  Timer? _autoScrollTimer;
-  bool _autoScrolling = false;
+  bool _autoScrolling = false; // 自动滚动状态（实际滚动由 WebView 内 rAF 驱动）
   Timer? _positionTimer;
   bool _positionRestored = false;
   double? _pendingScrollY; // 页面加载完成后要恢复的滚动位置
+  int _readingPct = -1; // 阅读进度百分比（Reader 通道上报，-1=未上报/页面不可滚动）
 
   @override
   void initState() {
@@ -156,8 +156,10 @@ class _DetailPageState extends State<DetailPage> with WidgetsBindingObserver {
   }
 
   Future<void> _initWebView() async {
+    _readingPct = 0;
     final ctrl = WebViewController()
-      ..setJavaScriptMode(JavaScriptMode.unrestricted);
+      ..setJavaScriptMode(JavaScriptMode.unrestricted)
+      ..addJavaScriptChannel('Reader', onMessageReceived: _onReaderMessage);
     final isDark = Theme.of(context).brightness == Brightness.dark;
     final ts = double.tryParse(PreferenceService.getDetailTextSize().replaceAll('px', '')) ?? 16;
     final showImg = PreferenceService.getShowImages();
@@ -184,6 +186,11 @@ class _DetailPageState extends State<DetailPage> with WidgetsBindingObserver {
     }
 
     String imgCss = showImg ? '' : 'img, video, iframe, canvas { display: none !important; }';
+    // 图片宽度: 0=全宽 1=适中 2=紧凑（此前设置只存储未接入 CSS，导致无效）
+    final iw = PreferenceService.getImageWidth().clamp(0, 2);
+    final imgMaxPct = const [100, 72, 50][iw];
+    final scpImgMax = const [300, 220, 160][iw];
+    final imgCenterCss = iw == 0 ? '' : 'img{display:block;margin-left:auto;margin-right:auto;}';
     // 字体选择
     String fontFamilyCss;
     String customFontFaces = '';
@@ -215,28 +222,21 @@ class _DetailPageState extends State<DetailPage> with WidgetsBindingObserver {
 
     final int rt = PreferenceService.getReadingTheme();
     // 颜色方案: 0=auto 1=light 2=sepia 3=dark 4=pure_dark
-    bool useDark = rt == 3 || rt == 4 || (rt == 0 && isDark);
-    bool usePureDark = rt == 4;
-    bool useSepia = rt == 2;
-    String bgColor, textColor, linkColor, blockBg, blockBorder, secColor, headingColor, inlineCodeBg;
-    String colorSchemeMeta = '';
-    if (useSepia) {
-      bgColor = '#f5eedd'; textColor = '#5b4636'; linkColor = '#8b6914';
-      blockBg = '#ede4c8'; blockBorder = '#d8cdb0'; secColor = '#8a7a6a';
-      headingColor = '#3d2e1e'; inlineCodeBg = '#e8dfc4';
-    } else if (useDark) {
-      bgColor = usePureDark ? '#000000' : '#16162a';
-      textColor = '#d4d4d8'; linkColor = '#7ec8f0';
-      blockBg = usePureDark ? '#1a1a1a' : '#22223a';
-      blockBorder = usePureDark ? '#2a2a2a' : '#3a3a52';
-      secColor = '#9898b0'; headingColor = '#e8e8ee';
-      inlineCodeBg = usePureDark ? '#252525' : '#2e2e48';
-      colorSchemeMeta = '<meta name="color-scheme" content="dark">';
-    } else {
-      bgColor = '#ffffff'; textColor = '#333333'; linkColor = '#1565c0';
-      blockBg = '#f5f5f7'; blockBorder = '#e0e0e0'; secColor = '#888';
-      headingColor = '#222'; inlineCodeBg = '#eef0f4';
-    }
+    // WebView 内容与 Flutter 外壳（Scaffold/AppBar/底栏/进度浮窗）共用一套调色板，
+    // 保证 sepia/纯黑等阅读主题下页面四周不留系统主题的色差
+    final pal = _ReadingPalette.of(rt, isDark ? Brightness.dark : Brightness.light);
+    final bgColor = pal.bgHex;
+    final textColor = pal.textHex;
+    final linkColor = pal.linkHex;
+    final blockBg = pal.blockBgHex;
+    final blockBorder = pal.blockBorderHex;
+    final secColor = pal.secHex;
+    final headingColor = pal.headingHex;
+    final inlineCodeBg = pal.codeBgHex;
+    final colorSchemeMeta = pal.isDarkTheme ? '<meta name="color-scheme" content="dark">' : '';
+    try {
+      await ctrl.setBackgroundColor(pal.bgColor); // 加载期间避免白闪
+    } catch (_) {}
     String darkFixJs = isDark ? '''
 window.addEventListener('DOMContentLoaded',function(){
   setTimeout(function(){
@@ -268,7 +268,7 @@ $colorSchemeMeta
 $customFontFaces
 <style>
   * { -webkit-tap-highlight-color: transparent; box-sizing: border-box; }
-  html { scroll-behavior: smooth; }
+  html { scroll-behavior: auto; }
   body {
     font-family: $fontFamilyCss;
     font-size: ${ts}px; line-height: ${PreferenceService.getLineHeight()};
@@ -292,10 +292,11 @@ $customFontFaces
   }
   a:active { opacity: 0.7; }
   img {
-    max-width: 100%; height: auto;
+    max-width: $imgMaxPct%; height: auto;
     border-radius: 8px; margin: 12px 0;
     box-shadow: 0 1px 4px rgba(0,0,0,0.08);
   }
+  $imgCenterCss
   $imgCss
   h1,h2,h3,h4,h5,h6 {
     margin: 24px 0 10px; color: $headingColor;
@@ -349,11 +350,12 @@ $customFontFaces
   .collapsible-block-unfolded { padding: 14px; display: none; }
   .collapsible-block-content { padding: 4px 0; }
   .collapsible-block-link { color: $linkColor; text-decoration: none; font-size: 0.9em; }
-  .scp-image-block { float: right; margin: 0 0 12px 20px; max-width: 300px; }
+  .scp-image-block { float: right; margin: 0 0 12px 20px; max-width: ${scpImgMax}px; }
   .scp-image-caption {
     display: block; font-size: 0.85em; color: $secColor;
     text-align: center; padding: 6px 0;
   }
+  .scp-image-block img { max-width: 100%; }
   .page-tags { padding: 10px 0; margin-top: 20px; border-top: 1px solid $blockBorder; font-size: 0.85em; }
   .page-tags a { color: $linkColor; margin-right: 8px; }
   .heading {
@@ -515,13 +517,15 @@ function _initReader(){
   var rulerOn = ${PreferenceService.getReadingRuler() ? 'true' : 'false'};
 
   // reading progress bar
-  var ticking = false;
+  var ticking = false, lastPct = -2;
   function updateProgress(){
     if(!prog)return;
     var h = document.documentElement.scrollHeight - window.innerHeight;
-    if(h<=0)return;
+    if(h<=0){ if(lastPct!==-1){ lastPct=-1; _post({t:'progress',p:-1}); } return; }
     var p = Math.min(100, (window.scrollY/h)*100);
     prog.style.width = p+'%';
+    var pct = Math.round(p);
+    if(pct!==lastPct){ lastPct=pct; _post({t:'progress',p:pct}); }
   }
   window.addEventListener('scroll',function(){
     if(!ticking){ requestAnimationFrame(function(){ updateProgress(); ticking=false; }); ticking=true; }
@@ -533,10 +537,13 @@ function _initReader(){
     if(!ruler)return;
     if(rulerOn){
       ruler.className='show';
-      ruler.style.top=(window.scrollY+window.innerHeight*0.48)+'px';
+      // #_ruler 为 position:fixed，top 必须用视口坐标；
+      // 之前误加 scrollY，滚动后标尺被推到视口之外不可见
+      ruler.style.top=(window.innerHeight*0.48)+'px';
     }else{ruler.className='';}
   }
   window.addEventListener('scroll',updateRuler,{passive:true});
+  window.addEventListener('resize',updateRuler);
   updateRuler();
 }
 if(document.readyState==='loading'){
@@ -544,6 +551,31 @@ if(document.readyState==='loading'){
 }else{
   _initReader();
 }
+// ── 自动滚动（rAF 帧驱动，无级平滑；触摸即暂停；到底自动停止）──
+// _post 供全脚本使用（进度上报/自动滚动事件），必须位于顶层作用域
+function _post(o){ try{ if(window.Reader&&Reader.postMessage)Reader.postMessage(JSON.stringify(o)); }catch(e){} }
+var _auto={on:false,speed:120,last:0,raf:0};
+function __autoStart(sp){
+  __autoStop();
+  _auto.on=true;_auto.speed=sp;_auto.last=0;
+  function step(ts){
+    if(!_auto.on)return;
+    if(_auto.last===0)_auto.last=ts;
+    var dt=(ts-_auto.last)/1000;_auto.last=ts;
+    var h=document.documentElement.scrollHeight-window.innerHeight;
+    if(h>0&&window.scrollY>=h-1){_auto.on=false;_post({t:'auto_end'});return;}
+    window.scrollBy(0,_auto.speed*dt);
+    _auto.raf=requestAnimationFrame(step);
+  }
+  _auto.raf=requestAnimationFrame(step);
+}
+function __autoStop(){
+  _auto.on=false;
+  if(_auto.raf){cancelAnimationFrame(_auto.raf);_auto.raf=0;}
+}
+document.addEventListener('touchstart',function(){
+  if(_auto.on)_post({t:'auto_touch'});
+},{passive:true});
 // ── 点击事件 ──
 document.addEventListener('click',function(e){
   // collapsible blocks
@@ -574,7 +606,7 @@ document.addEventListener('click',function(e){
       var pop=document.getElementById('_fnpop');
       if(!pop){
         pop=document.createElement('div');pop.id='_fnpop';
-        pop.style.cssText='position:absolute;z-index:99999;background:#333;color:#eee;padding:10px 14px 12px;border-radius:8px;font-size:13px;line-height:1.6;box-shadow:0 4px 24px rgba(0,0,0,0.6);max-width:88vw;pointer-events:auto;';
+        pop.style.cssText='position:absolute;z-index:99999;background:${pal.fnBgHex};color:${pal.fnTextHex};border:1px solid ${pal.fnBorderHex};padding:10px 14px 12px;border-radius:8px;font-size:13px;line-height:1.6;box-shadow:0 4px 24px rgba(0,0,0,0.25);max-width:88vw;pointer-events:auto;';
         // header
         var hd=document.createElement('div');
         hd.style.cssText='display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;';
@@ -625,6 +657,13 @@ $content
             await ctrl.runJavaScript('window.scrollTo(0, $_pendingScrollY)');
           } catch (_) {}
           _pendingScrollY = null;
+        }
+        // loadHtmlString 后立即启动的自动滚动可能早于脚本就绪而空转，这里补一次
+        if (_autoScrolling) {
+          try {
+            final px = (PreferenceService.getAutoScrollSpeed() * 60).clamp(30.0, 480.0).toStringAsFixed(1);
+            await ctrl.runJavaScript('if(window.__autoStart)__autoStart($px)');
+          } catch (_) {}
         }
       },
       onNavigationRequest: (req) async {
@@ -716,23 +755,49 @@ $content
 
   // ═══ 自动滚动 ═══
 
+  /// [speed] 为设置面板 0.5~5.0 档位；×60 换算为 px/s（与旧版每 50ms speed*3px 等速），
+  /// 实际滚动由页面内 rAF 逐帧执行，比 Timer + scrollBy 平滑得多
   void _startAutoScroll(double speed) {
-    _stopAutoScroll();
     _autoScrolling = true;
-    _autoScrollTimer = Timer.periodic(const Duration(milliseconds: 50), (_) async {
-      if (!_autoScrolling || _webController == null) return;
-      try {
-        await _webController!.scrollBy(0, (speed * 3).ceil());
-      } catch (_) {
-        _stopAutoScroll();
-      }
-    });
+    final px = (speed * 60).clamp(30.0, 480.0).toStringAsFixed(1);
+    try {
+      _webController?.runJavaScript('if(window.__autoStart)__autoStart($px)');
+    } catch (_) {}
   }
 
   void _stopAutoScroll() {
     _autoScrolling = false;
-    _autoScrollTimer?.cancel();
-    _autoScrollTimer = null;
+    try {
+      _webController?.runJavaScript('if(window.__autoStop)__autoStop()');
+    } catch (_) {}
+  }
+
+  // ═══ JS 通道（Reader）═══
+
+  void _onReaderMessage(JavaScriptMessage msg) {
+    Object? data;
+    try {
+      data = jsonDecode(msg.message);
+    } catch (_) {
+      return;
+    }
+    if (data is! Map) return;
+    switch (data['t']) {
+      case 'progress':
+        final p = (data['p'] as num?)?.round();
+        if (p == null || p < -1 || p > 100) return;
+        if (p != _readingPct && mounted) setState(() => _readingPct = p);
+        break;
+      case 'auto_touch': // 用户触摸屏幕 → 暂停自动滚动
+      case 'auto_end': // 滚动到页面底部 → 停止
+        if (!_autoScrolling) return;
+        _stopAutoScroll();
+        if (mounted) {
+          setState(() {});
+          if (data['t'] == 'auto_end') _snack('已到达页面底部');
+        }
+        break;
+    }
   }
 
   // ═══ 阅读位置 ═══
@@ -902,7 +967,7 @@ $content
   }
 
   void _openInBrowser() async {
-    final url = '${SCPConstants.scpSiteUrl}/${widget.link}';
+    final url = '${SCPConstants.scpSiteUrl}/$_cleanLink';
     if (await canLaunchUrl(Uri.parse(url))) {
       await launchUrl(Uri.parse(url), mode: LaunchMode.externalApplication);
     }
@@ -916,7 +981,11 @@ $content
 
   Future<void> _jumpToTop() async {
     if (_webController != null) {
-      await _webController!.scrollTo(0, 0);
+      try {
+        await _webController!.runJavaScript('window.scrollTo({top:0,behavior:"smooth"})');
+      } catch (_) {
+        await _webController!.scrollTo(0, 0);
+      }
     }
   }
 
@@ -925,10 +994,12 @@ $content
   @override
   Widget build(BuildContext context) {
     final fullScreen = PreferenceService.getFullScreen();
+    final pal = _ReadingPalette.of(PreferenceService.getReadingTheme(), Theme.of(context).brightness);
     return Scaffold(
-      backgroundColor: Theme.of(context).brightness == Brightness.dark
-          ? const Color(0xFF1a1a2e) : Colors.white,
+      backgroundColor: pal.bgColor,
       appBar: fullScreen ? null : AppBar(
+        backgroundColor: pal.bgColor,
+        foregroundColor: pal.fgColor,
         title: Text(widget.title, maxLines: 1, overflow: TextOverflow.ellipsis),
         actions: [
           IconButton(icon: const Icon(Icons.settings, size: 20), tooltip: '阅读设置', onPressed: _showSettings),
@@ -1008,6 +1079,25 @@ $content
               : _webController != null
                   ? Stack(children: [
                       WebViewWidget(controller: _webController!),
+                      if (_readingPct >= 0)
+                        Positioned(
+                          top: fullScreen ? MediaQuery.of(context).padding.top + 8 : 8,
+                          left: 12,
+                          child: IgnorePointer(
+                            child: Container(
+                              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                              decoration: BoxDecoration(
+                                color: Colors.black38,
+                                borderRadius: BorderRadius.circular(10),
+                              ),
+                              child: Text(
+                                '$_readingPct%',
+                                style: const TextStyle(
+                                    fontSize: 11, color: Colors.white, fontWeight: FontWeight.w500),
+                              ),
+                            ),
+                          ),
+                        ),
                       if (PreferenceService.getFullScreen())
                         Positioned(
                           top: MediaQuery.of(context).padding.top + 8,
@@ -1022,10 +1112,11 @@ $content
 
   Widget _buildBottomBar(BuildContext context) {
     final isDark = Theme.of(context).brightness == Brightness.dark;
+    final pal = _ReadingPalette.of(PreferenceService.getReadingTheme(), Theme.of(context).brightness);
     return Container(
       decoration: BoxDecoration(
-        color: isDark ? const Color(0xFF1a1a2e) : null,
-        border: Border(top: BorderSide(color: isDark ? Colors.white12 : Colors.grey.shade300)),
+        color: pal.bgColor,
+        border: Border(top: BorderSide(color: pal.borderColor)),
       ),
       child: SafeArea(
         child: Padding(
@@ -1063,6 +1154,78 @@ $content
       icon: Icon(icon, size: 20, color: color),
       onPressed: onTap, tooltip: tooltip,
       constraints: const BoxConstraints(minWidth: 36, minHeight: 36), padding: EdgeInsets.zero,
+    );
+  }
+}
+
+/// 阅读主题调色板 — WebView 内容与 Flutter 外壳（背景/AppBar/底栏/浮窗）共用，
+/// 避免 sepia/纯黑等阅读主题下页面四周仍是系统主题颜色的割裂感
+class _ReadingPalette {
+  final bool isDarkTheme;
+  // WebView CSS 用
+  final String bgHex, textHex, linkHex, blockBgHex, blockBorderHex, secHex, headingHex, codeBgHex;
+  // 脚注弹窗（此前硬编码深色，浅色主题下突兀）
+  final String fnBgHex, fnTextHex, fnBorderHex;
+  // Flutter 外壳用
+  final Color bgColor, fgColor, borderColor;
+
+  const _ReadingPalette({
+    required this.isDarkTheme,
+    required this.bgHex,
+    required this.textHex,
+    required this.linkHex,
+    required this.blockBgHex,
+    required this.blockBorderHex,
+    required this.secHex,
+    required this.headingHex,
+    required this.codeBgHex,
+    required this.fnBgHex,
+    required this.fnTextHex,
+    required this.fnBorderHex,
+    required this.bgColor,
+    required this.fgColor,
+    required this.borderColor,
+  });
+
+  /// [rt] 阅读主题 (0=auto 1=light 2=sepia 3=dark 4=pure_dark)
+  static _ReadingPalette of(int rt, Brightness systemBrightness) {
+    final useSepia = rt == 2;
+    final useDark = rt == 3 || rt == 4 || (rt == 0 && systemBrightness == Brightness.dark);
+    final usePureDark = rt == 4;
+    if (useSepia) {
+      return const _ReadingPalette(
+        isDarkTheme: false,
+        bgHex: '#f5eedd', textHex: '#5b4636', linkHex: '#8b6914',
+        blockBgHex: '#ede4c8', blockBorderHex: '#d8cdb0',
+        secHex: '#8a7a6a', headingHex: '#3d2e1e', codeBgHex: '#e8dfc4',
+        fnBgHex: '#fbf6ea', fnTextHex: '#5b4636', fnBorderHex: '#d8cdb0',
+        bgColor: Color(0xFFF5EEDD), fgColor: Color(0xFF5B4636), borderColor: Color(0xFFD8CDB0),
+      );
+    }
+    if (useDark) {
+      return _ReadingPalette(
+        isDarkTheme: true,
+        bgHex: usePureDark ? '#000000' : '#16162a',
+        textHex: '#d4d4d8', linkHex: '#7ec8f0',
+        blockBgHex: usePureDark ? '#1a1a1a' : '#22223a',
+        blockBorderHex: usePureDark ? '#2a2a2a' : '#3a3a52',
+        secHex: '#9898b0', headingHex: '#e8e8ee',
+        codeBgHex: usePureDark ? '#252525' : '#2e2e48',
+        fnBgHex: usePureDark ? '#1f1f1f' : '#26263e',
+        fnTextHex: '#e4e4e8',
+        fnBorderHex: usePureDark ? '#333333' : '#3a3a52',
+        bgColor: usePureDark ? const Color(0xFF000000) : const Color(0xFF16162A),
+        fgColor: const Color(0xFFD4D4D8),
+        borderColor: usePureDark ? const Color(0xFF2A2A2A) : const Color(0xFF3A3A52),
+      );
+    }
+    return const _ReadingPalette(
+      isDarkTheme: false,
+      bgHex: '#ffffff', textHex: '#333333', linkHex: '#1565c0',
+      blockBgHex: '#f5f5f7', blockBorderHex: '#e0e0e0',
+      secHex: '#888', headingHex: '#222', codeBgHex: '#eef0f4',
+      fnBgHex: '#ffffff', fnTextHex: '#333333', fnBorderHex: '#c9c9c9',
+      bgColor: Colors.white, fgColor: Color(0xFF333333), borderColor: Color(0xFFE0E0E0),
     );
   }
 }
