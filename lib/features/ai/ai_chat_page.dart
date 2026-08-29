@@ -17,6 +17,7 @@ class AiChatPage extends StatefulWidget {
   final Color fg;
   final Color border;
   final bool dark;
+  final String? autoRunFeatureId; // 打开后立即执行的快捷功能(框选菜单直达用)
 
   const AiChatPage({
     super.key,
@@ -26,6 +27,7 @@ class AiChatPage extends StatefulWidget {
     required this.fg,
     required this.border,
     required this.dark,
+    this.autoRunFeatureId,
   });
 
   @override
@@ -69,6 +71,18 @@ class _AiChatPageState extends State<AiChatPage> {
       final nearBottom = _scroll.position.maxScrollExtent - _scroll.position.pixels < 240;
       _stickBottom = nearBottom;
     });
+    final auto = widget.autoRunFeatureId;
+    if (auto != null && auto.isNotEmpty) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (!mounted) return;
+        for (final f in _quickFeatures) {
+          if (f.id == auto) {
+            _runFeature(f);
+            return;
+          }
+        }
+      });
+    }
   }
 
   @override

@@ -14,7 +14,10 @@ import '../../core/backend/backend_types.dart';
 import '../../core/services/database_helper.dart';
 import '../../core/services/preference_service.dart';
 import '../../core/utils/chinese_converter.dart';
+import '../../core/utils/route_observer.dart';
+import '../search/search_page.dart';
 import 'reading_settings.dart';
+import 'selection_menu.dart';
 
 /// 详情页 — WebView 渲染 + 完整阅读功能
 class DetailPage extends StatefulWidget {
@@ -35,7 +38,7 @@ class DetailPage extends StatefulWidget {
   State<DetailPage> createState() => _DetailPageState();
 }
 
-class _DetailPageState extends State<DetailPage> with WidgetsBindingObserver {
+class _DetailPageState extends State<DetailPage> with WidgetsBindingObserver, RouteAware {
   final _backend = BackendService.instance;
   WebViewController? _webController;
   String? _detailHtml;
@@ -51,17 +54,54 @@ class _DetailPageState extends State<DetailPage> with WidgetsBindingObserver {
   int _readingPct = -1; // 阅读进度百分比（Reader 通道上报，-1=未上报/页面不可滚动）
   List<_TocItem> _toc = []; // 文档目录（h1-h3），由页面 JS 上报
   final ValueNotifier<int> _tocActive = ValueNotifier<int>(-1); // 当前章节索引
+  static const MethodChannel _selectionGate =
+      MethodChannel('scp_app/selection_gate'); // 原生层吞掉系统选择菜单
+  SelectionReport? _selection; // 当前 WebView 选区(null=无菜单)
+  bool _routeSubscribed = false;
 
   @override
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
+    _setSelectionGate(true);
     _loadData();
+  }
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    if (!_routeSubscribed) {
+      final route = ModalRoute.of(context);
+      if (route is PageRoute) {
+        RouteObservers.observer.subscribe(this, route);
+        _routeSubscribed = true;
+      }
+    }
+  }
+
+  // 框选菜单拦截只在本页可见时开启;上层路由(AI 对话页的输入框等)期间必须关闭
+  @override
+  void didPush() => _setSelectionGate(true);
+
+  @override
+  void didPopNext() => _setSelectionGate(true);
+
+  @override
+  void didPushNext() => _setSelectionGate(false);
+
+  @override
+  void didPop() => _setSelectionGate(false);
+
+  void _setSelectionGate(bool on) {
+    _selectionGate.invokeMethod('setSuppress', {'value': on}).catchError((_) {});
+    if (!on && mounted) setState(() => _selection = null);
   }
 
   @override
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
+    if (_routeSubscribed) RouteObservers.observer.unsubscribe(this);
+    _setSelectionGate(false);
     _stopAutoScroll();
     _stopPositionTimer(saveFinal: true);
     _tocActive.dispose();
@@ -167,7 +207,8 @@ class _DetailPageState extends State<DetailPage> with WidgetsBindingObserver {
     _tocActive.value = -1;
     final ctrl = WebViewController()
       ..setJavaScriptMode(JavaScriptMode.unrestricted)
-      ..addJavaScriptChannel('Reader', onMessageReceived: _onReaderMessage);
+      ..addJavaScriptChannel('Reader', onMessageReceived: _onReaderMessage)
+      ..addJavaScriptChannel('Selection', onMessageReceived: _onSelectionMessage);
     final isDark = Theme.of(context).brightness == Brightness.dark;
     final ts = double.tryParse(PreferenceService.getDetailTextSize().replaceAll('px', '')) ?? 16;
     final showImg = PreferenceService.getShowImages();
@@ -769,6 +810,29 @@ $darkFixJs
 <div id="_progress"></div>
 <div id="_ruler"></div>
 $content
+<script>
+(function(){
+  var timer=null;
+  function post(o){try{Selection.postMessage(JSON.stringify(o));}catch(e){}}
+  function vp(){var vv=window.visualViewport;return vv?{s:vv.scale,ox:vv.offsetLeft,oy:vv.offsetTop}:{s:1,ox:0,oy:0};}
+  function clearSel(){post({t:'clear'});}
+  function report(){
+    var s=window.getSelection();
+    if(!s||s.isCollapsed||!s.rangeCount){clearSel();return;}
+    var txt=s.toString();
+    if(!txt.trim()){clearSel();return;}
+    var r=s.getRangeAt(0).getBoundingClientRect();
+    var v=vp();
+    post({t:'show',text:txt.slice(0,20000),
+      rect:{x:r.left,y:r.top,w:r.width,h:r.height},scale:v.s,ox:v.ox,oy:v.oy});
+  }
+  document.addEventListener('selectionchange',function(){clearTimeout(timer);timer=setTimeout(report,320);});
+  window.addEventListener('scroll',clearSel,{passive:true});
+  window.addEventListener('resize',clearSel,{passive:true});
+  document.addEventListener('touchstart',function(){clearSel();},{passive:true});
+  window.__selClear=function(){var s=window.getSelection();if(s){s.removeAllRanges();}clearSel();};
+})();
+</script>
 </body></html>''';
 
     ctrl.setNavigationDelegate(NavigationDelegate(
@@ -1242,6 +1306,118 @@ $content
   }
   void _snack(String m) => ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(m)));
 
+  // ═══ 框选菜单 ═══
+
+  void _onSelectionMessage(JavaScriptMessage msg) {
+    final r = SelectionReport.tryParse(msg.message);
+    if (!mounted) return;
+    setState(() => _selection = (r != null && r.show) ? r : null);
+  }
+
+  void _dismissSelection() {
+    setState(() => _selection = null);
+    try {
+      _webController?.runJavaScript('window.__selClear && window.__selClear()');
+    } catch (_) {}
+  }
+
+  List<SelectionAction> _selectionQuick() {
+    final feats =
+        AiSettingsStore.loadSync().effectiveFeatures().map((f) => f.id).toSet();
+    return [
+      const SelectionAction('copy', '复制', Icons.copy),
+      if (feats.contains('translate'))
+        const SelectionAction('ai_translate', 'AI 翻译', Icons.g_translate),
+      if (feats.contains('explain'))
+        const SelectionAction('ai_explain', 'AI 解释', Icons.auto_awesome),
+      const SelectionAction('app_search', '应用内搜索', Icons.search),
+    ];
+  }
+
+  List<SelectionAction> _selectionItems() {
+    final q = (_selection?.text ?? '')
+        .trim()
+        .replaceAll(RegExp(r'\s+'), ' ');
+    final short = q.length <= 12 ? q : '${q.substring(0, 12)}…';
+    return [
+      SelectionAction('site_search', '站内搜索「$short」', Icons.travel_explore),
+      SelectionAction('web_search', '网页搜索「$short」', Icons.language),
+      const SelectionAction('t2s', '转为简体并复制', Icons.spellcheck),
+      const SelectionAction('s2t', '转为繁体并复制', Icons.abc),
+      const SelectionAction('draft', '存入草稿箱', Icons.edit_note),
+    ];
+  }
+
+  Future<void> _handleSelectionAction(SelectionAction a) async {
+    final text = _selection?.text ?? '';
+    _dismissSelection();
+    switch (a.id) {
+      case 'copy':
+        await Clipboard.setData(ClipboardData(text: text));
+        _snack('已复制选段');
+      case 'app_search':
+        if (!mounted) return;
+        Navigator.push(context,
+            MaterialPageRoute(builder: (_) => SearchPage(initialKeyword: text)));
+      case 'site_search':
+        _launchExternal(
+            'https://scp-wiki-cn.wikidot.com/search:site/q/${Uri.encodeComponent(text)}');
+      case 'web_search':
+        _launchExternal(
+            'https://www.google.com/search?q=${Uri.encodeComponent(text)}');
+      case 't2s':
+        await _convertCopy(text, false);
+      case 's2t':
+        await _convertCopy(text, true);
+      case 'draft':
+        PreferenceService.saveDraftContent(
+            '${PreferenceService.getDraftContent()}\n\n> $text');
+        _snack('已存入草稿箱');
+      case 'ai_translate':
+        _openSelectionAi(text, 'translate');
+      case 'ai_explain':
+        _openSelectionAi(text, 'explain');
+    }
+  }
+
+  Future<void> _convertCopy(String text, bool toTraditional) async {
+    await ChineseConverter.ensureLoaded();
+    final out = toTraditional
+        ? ChineseConverter.toTraditional(text)
+        : ChineseConverter.toSimplified(text);
+    await Clipboard.setData(ClipboardData(text: out));
+    _snack(toTraditional ? '已转为繁体并复制' : '已转为简体并复制');
+  }
+
+  void _launchExternal(String url) async {
+    final uri = Uri.parse(url);
+    if (await canLaunchUrl(uri)) {
+      await launchUrl(uri, mode: LaunchMode.externalApplication);
+    } else {
+      _snack('无法打开链接');
+    }
+  }
+
+  void _openSelectionAi(String text, String featureId) {
+    final pal = _ReadingPalette.of(
+        PreferenceService.getReadingTheme(), Theme.of(context).brightness);
+    Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (_) => AiChatPage(
+          docTitle: widget.title,
+          articleText: text,
+          autoRunFeatureId: featureId,
+          bg: pal.bgColor,
+          fg: pal.fgColor,
+          border: pal.borderColor,
+          dark: pal.isDarkTheme,
+        ),
+      ),
+    );
+  }
+
+
   Future<void> _jumpToTop() async {
     if (_webController != null) {
       try {
@@ -1346,6 +1522,17 @@ $content
               : _webController != null
                   ? Stack(children: [
                       WebViewWidget(controller: _webController!),
+                      if (_selection != null)
+                        SelectionMenu(
+                          selRect: _selection!.rect,
+                          bg: pal.bgColor,
+                          fg: pal.fgColor,
+                          border: pal.borderColor,
+                          dark: pal.isDarkTheme,
+                          quick: _selectionQuick(),
+                          items: _selectionItems(),
+                          onAction: _handleSelectionAction,
+                        ),
                       if (_readingPct >= 0)
                         Positioned(
                           top: fullScreen ? MediaQuery.of(context).padding.top + 8 : 8,
