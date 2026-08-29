@@ -46,6 +46,8 @@ class _DetailPageState extends State<DetailPage> with WidgetsBindingObserver {
   bool _positionRestored = false;
   double? _pendingScrollY; // 页面加载完成后要恢复的滚动位置
   int _readingPct = -1; // 阅读进度百分比（Reader 通道上报，-1=未上报/页面不可滚动）
+  List<_TocItem> _toc = []; // 文档目录（h1-h3），由页面 JS 上报
+  final ValueNotifier<int> _tocActive = ValueNotifier<int>(-1); // 当前章节索引
 
   @override
   void initState() {
@@ -59,6 +61,7 @@ class _DetailPageState extends State<DetailPage> with WidgetsBindingObserver {
     WidgetsBinding.instance.removeObserver(this);
     _stopAutoScroll();
     _stopPositionTimer(saveFinal: true);
+    _tocActive.dispose();
     if (PreferenceService.getKeepScreenOn()) {
       WidgetsBinding.instance.renderView.automaticSystemUiAdjustment = true;
     }
@@ -157,6 +160,8 @@ class _DetailPageState extends State<DetailPage> with WidgetsBindingObserver {
 
   Future<void> _initWebView() async {
     _readingPct = 0;
+    _toc = [];
+    _tocActive.value = -1;
     final ctrl = WebViewController()
       ..setJavaScriptMode(JavaScriptMode.unrestricted)
       ..addJavaScriptChannel('Reader', onMessageReceived: _onReaderMessage);
@@ -503,6 +508,14 @@ $customFontFaces
     z-index: 99997; transition: opacity 0.3s ease;
   }
   #_ruler.show { opacity: 0.5; }
+  /* 图片点击放大遮罩 */
+  #_lightbox {
+    position: fixed; top: 0; left: 0; right: 0; bottom: 0; z-index: 100000; display: none;
+    background: rgba(0,0,0,0.9);
+    align-items: center; justify-content: center; flex-direction: column;
+  }
+  #_lightbox img { max-width: 96vw; max-height: 84vh; box-shadow: none; margin: 0; border-radius: 0; }
+  #_lightbox .cap { color: #ddd; font-size: 13px; margin-top: 12px; padding: 0 16px; text-align: center; max-width: 92vw; }
   @media (prefers-reduced-motion: reduce) {
     *, *::before, *::after { transition-duration: 0.01ms !important; }
   }
@@ -528,7 +541,7 @@ function _initReader(){
     if(pct!==lastPct){ lastPct=pct; _post({t:'progress',p:pct}); }
   }
   window.addEventListener('scroll',function(){
-    if(!ticking){ requestAnimationFrame(function(){ updateProgress(); ticking=false; }); ticking=true; }
+    if(!ticking){ requestAnimationFrame(function(){ updateProgress(); updateTocActive(); ticking=false; }); ticking=true; }
   },{passive:true});
   updateProgress();
 
@@ -545,6 +558,40 @@ function _initReader(){
   window.addEventListener('scroll',updateRuler,{passive:true});
   window.addEventListener('resize',updateRuler);
   updateRuler();
+
+  // ── 目录 (TOC)：采集 h1-h3 标题，赋 id，供跳转与当前章节高亮 ──
+  var _tocHeads = [];
+  function measureToc(){
+    for(var i=0;i<_tocHeads.length;i++){
+      var el=document.getElementById(_tocHeads[i].id);
+      if(el){ var r=el.getBoundingClientRect(); _tocHeads[i].top=r.top+window.scrollY; }
+    }
+  }
+  function buildToc(){
+    var hs = document.querySelectorAll('h1,h2,h3');
+    if(!hs||!hs.length)return;
+    var seen={}, items=[];
+    for(var i=0;i<hs.length;i++){
+      var h=hs[i], txt=(h.textContent||'').trim();
+      if(!txt || txt.length>120) continue;
+      if(!h.id) h.id='_toc_'+i;
+      if(seen[h.id])continue; seen[h.id]=1;
+      _tocHeads.push({id:h.id, top:0});
+      items.push({lvl:parseInt(h.tagName.substring(1)), text:txt, id:h.id});
+    }
+    if(items.length){ _post({t:'toc', items:items}); }
+    measureToc();
+    window.addEventListener('resize',function(){ setTimeout(measureToc,200); });
+  }
+  var tocActive = -1;
+  function updateTocActive(){
+    if(!_tocHeads.length)return;
+    var y = window.scrollY + window.innerHeight*0.28, idx = -1;
+    for(var i=0;i<_tocHeads.length;i++){ if(_tocHeads[i].top<=y) idx=i; else break; }
+    if(idx!==tocActive){ tocActive=idx; _post({t:'tocActive', idx:idx}); }
+  }
+  buildToc();
+  updateTocActive();
 }
 if(document.readyState==='loading'){
   document.addEventListener('DOMContentLoaded',_initReader);
@@ -576,8 +623,34 @@ function __autoStop(){
 document.addEventListener('touchstart',function(){
   if(_auto.on)_post({t:'auto_touch'});
 },{passive:true});
+// ── 目录跳转（供 Flutter 侧调用）：目标前留 12px 避让顶部进度条 ──
+window.__tocGo=function(id){
+  var el=document.getElementById(id);
+  if(!el)return;
+  var y=el.getBoundingClientRect().top+window.scrollY-12;
+  window.scrollTo({top:y<0?0:y,behavior:'smooth'});
+};
 // ── 点击事件 ──
 document.addEventListener('click',function(e){
+  // 图片点击放大（仅当 img src 或所在 <a> href 指向图片时拦截，普通链接照常跳转）
+  if(e.target && e.target.tagName==='IMG'){
+    var im=e.target, src=im.currentSrc||im.src||'';
+    var la=im.closest('a'), href=la?(la.href||''):'';
+    var imgRe=/[.](png|jpe?g|gif|webp|bmp|svg)([?].*)?[\$]/i;
+    if(imgRe.test(src)||imgRe.test(href)){
+      e.preventDefault();e.stopPropagation();
+      var box=document.createElement('div');box.id='_lightbox';
+      var big=document.createElement('img');big.src=imgRe.test(href)?href:src;
+      box.appendChild(big);
+      var blk=im.closest('.scp-image-block');
+      if(blk){var cp=blk.querySelector('.scp-image-caption');
+        if(cp&&cp.textContent.trim()){var c=document.createElement('div');c.className='cap';c.textContent=cp.textContent.trim();box.appendChild(c);}}
+      box.style.display='flex';
+      box.addEventListener('click',function(ev){ev.stopPropagation();ev.preventDefault();box.remove();},true);
+      document.body.appendChild(box);
+      return;
+    }
+  }
   // collapsible blocks
   var f=e.target.closest('.collapsible-block-folded');
   if(f){var b=f.closest('.collapsible-block');var u=b.querySelector('.collapsible-block-unfolded');
@@ -797,6 +870,25 @@ $content
           if (data['t'] == 'auto_end') _snack('已到达页面底部');
         }
         break;
+      case 'toc': // 页面解析出目录
+        final list = data['items'];
+        if (list is! List) return;
+        final items = <_TocItem>[];
+        for (final it in list) {
+          if (it is Map && it['id'] != null) {
+            items.add(_TocItem(
+              level: (it['lvl'] as num?)?.toInt() ?? 2,
+              text: (it['text'] ?? '').toString(),
+              id: it['id'].toString(),
+            ));
+          }
+        }
+        if (mounted) setState(() => _toc = items);
+        break;
+      case 'tocActive': // 当前所在章节变化
+        final idx = (data['idx'] as num?)?.toInt() ?? -1;
+        if (idx != _tocActive.value) _tocActive.value = idx;
+        break;
     }
   }
 
@@ -834,6 +926,12 @@ $content
         _pendingScrollY = saved;
         // 立即尝试 scrollTo — 页面可能已渲染完毕
         await _tryScrollNow(saved);
+        // 让用户知道位置变化来自"继续阅读"而非页面 bug
+        if (mounted && _readingPct > 0) {
+          _snack('已恢复上次阅读位置 · $_readingPct%');
+        } else if (mounted) {
+          _snack('已恢复上次阅读位置');
+        }
       }
     } catch (_) {}
     _startPositionTimer();
@@ -844,6 +942,84 @@ $content
     if (_webController == null) return;
     try {
       await _webController!.runJavaScript('window.scrollTo(0, $y)');
+    } catch (_) {}
+  }
+
+  // ═══ 目录 ═══
+
+  Future<void> _showToc() async {
+    if (_toc.length < 2) return;
+    await showModalBottomSheet<void>(
+      context: context,
+      showDragHandle: true,
+      constraints: BoxConstraints(maxHeight: MediaQuery.of(context).size.height * 0.7),
+      builder: (sheetCtx) {
+        // 面板内的跳转按钮用 PopScope 之外的方式：点击项 → 关面板 → 滚动
+        return SafeArea(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Padding(
+                padding: const EdgeInsets.fromLTRB(20, 0, 20, 8),
+                child: Row(children: [
+                  Text('目录', style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600, color: Theme.of(sheetCtx).colorScheme.onSurface)),
+                  const Spacer(),
+                  Text('${_toc.length} 个章节', style: TextStyle(fontSize: 12, color: Theme.of(sheetCtx).colorScheme.onSurfaceVariant)),
+                ]),
+              ),
+              Flexible(
+                child: ValueListenableBuilder<int>(
+                  valueListenable: _tocActive,
+                  builder: (_, active, __) => ListView.builder(
+                    shrinkWrap: true,
+                    itemCount: _toc.length,
+                    itemBuilder: (_, i) {
+                      final it = _toc[i];
+                      final isCur = i == active;
+                      final indent = (it.level - 1) * 14.0;
+                      return ListTile(
+                        dense: true,
+                        visualDensity: const VisualDensity(vertical: -1),
+                        contentPadding: EdgeInsets.only(left: 16 + indent, right: 16),
+                        leading: isCur
+                            ? Icon(Icons.circle, size: 8, color: Theme.of(sheetCtx).colorScheme.primary)
+                            : null,
+                        title: Text(
+                          it.text,
+                          maxLines: 2,
+                          overflow: TextOverflow.ellipsis,
+                          style: TextStyle(
+                            fontSize: it.level == 1 ? 15 : 14,
+                            fontWeight: isCur ? FontWeight.w600 : (it.level == 1 ? FontWeight.w600 : FontWeight.normal),
+                            color: isCur ? Theme.of(sheetCtx).colorScheme.primary : Theme.of(sheetCtx).colorScheme.onSurface,
+                          ),
+                        ),
+                        onTap: () {
+                          Navigator.pop(sheetCtx);
+                          _tocGo(it.id);
+                        },
+                      );
+                    },
+                  ),
+                ),
+              ),
+            ],
+          ),
+        );
+      },
+    );
+  }
+
+  void _tocGo(String id) {
+    final c = _webController;
+    if (c == null) return;
+    // 与触摸暂停一致：手动跳转章节时先停自动滚动，避免 rAF 打断平滑动画
+    if (_autoScrolling) {
+      _stopAutoScroll();
+      if (mounted) setState(() {});
+    }
+    try {
+      c.runJavaScript('window.__tocGo && window.__tocGo(${jsonEncode(id)})');
     } catch (_) {}
   }
 
@@ -861,6 +1037,20 @@ $content
           shape: BoxShape.circle,
         ),
         child: const Icon(Icons.close, size: 18, color: Colors.white70),
+      ),
+    );
+  }
+
+  Widget _buildTocBtn() {
+    return GestureDetector(
+      onTap: _showToc,
+      child: Container(
+        width: 36, height: 36,
+        decoration: const BoxDecoration(
+          color: Colors.black26,
+          shape: BoxShape.circle,
+        ),
+        child: const Icon(Icons.list_alt, size: 18, color: Colors.white70),
       ),
     );
   }
@@ -1002,6 +1192,8 @@ $content
         foregroundColor: pal.fgColor,
         title: Text(widget.title, maxLines: 1, overflow: TextOverflow.ellipsis),
         actions: [
+          if (_toc.length >= 2)
+            IconButton(icon: const Icon(Icons.list_alt, size: 20), tooltip: '目录', onPressed: _showToc),
           IconButton(icon: const Icon(Icons.settings, size: 20), tooltip: '阅读设置', onPressed: _showSettings),
           PopupMenuButton<String>(
             onSelected: (v) {
@@ -1103,6 +1295,12 @@ $content
                           top: MediaQuery.of(context).padding.top + 8,
                           right: 12,
                           child: _buildExitBtn(),
+                        ),
+                      if (PreferenceService.getFullScreen() && _toc.length >= 2)
+                        Positioned(
+                          top: MediaQuery.of(context).padding.top + 8,
+                          right: 56,
+                          child: _buildTocBtn(),
                         ),
                     ])
                   : const Center(child: Text('加载中...')),
@@ -1228,4 +1426,13 @@ class _ReadingPalette {
       bgColor: Colors.white, fgColor: Color(0xFF333333), borderColor: Color(0xFFE0E0E0),
     );
   }
+}
+
+/// 文档目录条目（由页面内 JS 采集 h1-h3 后上报）
+class _TocItem {
+  final int level; // 1=h1 2=h2 3=h3
+  final String text;
+  final String id; // 元素 id，交给 window.__tocGo 滚动定位
+
+  const _TocItem({required this.level, required this.text, required this.id});
 }
