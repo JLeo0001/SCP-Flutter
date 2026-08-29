@@ -52,25 +52,40 @@ class _AiSettingsPageState extends State<AiSettingsPage> {
                           : Icons.diamond_outlined,
                   color: p.enabled ? cs.primary : cs.outlineVariant,
                 ),
-                title: Text(p.name, maxLines: 1, overflow: TextOverflow.ellipsis),
+                title:
+                    Text(p.name, maxLines: 1, overflow: TextOverflow.ellipsis),
                 subtitle: Text(
                   '${p.type.label} · ${p.model.trim().isEmpty ? "未填模型" : p.model.trim()}',
-                  maxLines: 1, overflow: TextOverflow.ellipsis,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
                 ),
-                trailing: Switch(value: p.enabled, onChanged: (v) { p.enabled = v; _persist(); }),
+                trailing: Switch(
+                    value: p.enabled,
+                    onChanged: (v) {
+                      p.enabled = v;
+                      _persist();
+                    }),
                 onTap: () => _editProvider(p),
               ),
           const Divider(),
           _sectionHeader(context, '功能', onAdd: _addCustomFeature),
           if (_s.features.isEmpty)
-            _hintCard(context, Icons.tune, '没有可用功能', '添加自定义功能后,会显示为阅读页 AI 助手里的快捷操作。')
+            _hintCard(
+                context, Icons.tune, '没有可用功能', '添加自定义功能后,会显示为阅读页 AI 助手里的快捷操作。')
           else
             for (final f in _s.features)
               ListTile(
-                leading: Icon(_featureIcon(f.id), color: f.enabled ? cs.primary : cs.outlineVariant),
+                leading: Icon(_featureIcon(f.id),
+                    color: f.enabled ? cs.primary : cs.outlineVariant),
                 title: Text(f.name),
-                subtitle: Text(_featureSubtitle(f), maxLines: 1, overflow: TextOverflow.ellipsis),
-                trailing: Switch(value: f.enabled, onChanged: (v) { f.enabled = v; _persist(); }),
+                subtitle: Text(_featureSubtitle(f),
+                    maxLines: 1, overflow: TextOverflow.ellipsis),
+                trailing: Switch(
+                    value: f.enabled,
+                    onChanged: (v) {
+                      f.enabled = v;
+                      _persist();
+                    }),
                 onTap: () => _editFeature(f),
                 onLongPress: f.builtin ? null : () => _deleteFeature(f),
               ),
@@ -79,10 +94,13 @@ class _AiSettingsPageState extends State<AiSettingsPage> {
           ListTile(
             title: Text('正文携带上限 · ${_s.contextMaxChars} 字'),
             subtitle: Slider(
-              min: 1000, max: 30000, divisions: 58,
+              min: 1000,
+              max: 30000,
+              divisions: 58,
               label: '${_s.contextMaxChars}',
               value: _s.contextMaxChars.clamp(1000, 30000).toDouble(),
-              onChanged: (v) => setState(() => _s.contextMaxChars = (v / 500).round() * 500),
+              onChanged: (v) =>
+                  setState(() => _s.contextMaxChars = (v / 500).round() * 500),
               onChangeEnd: (_) => _persist(),
             ),
           ),
@@ -90,7 +108,10 @@ class _AiSettingsPageState extends State<AiSettingsPage> {
             title: const Text('附带文档标题'),
             subtitle: const Text('在提示词的 {title} 占位符及上下文中注入当前文档标题'),
             value: _s.includeTitle,
-            onChanged: (v) { _s.includeTitle = v; _persist(); },
+            onChanged: (v) {
+              _s.includeTitle = v;
+              _persist();
+            },
           ),
           const SizedBox(height: 16),
           Padding(
@@ -99,7 +120,10 @@ class _AiSettingsPageState extends State<AiSettingsPage> {
               '· 所有配置仅保存在本机;API Key 只会发送到你填写的地址。\n'
               '· 内置功能的提示词都可以修改;长按自定义功能可删除。\n'
               '· 若接口较慢或超额,可调低正文携带上限以减少 token 消耗。',
-              style: Theme.of(context).textTheme.bodySmall?.copyWith(color: cs.outline),
+              style: Theme.of(context)
+                  .textTheme
+                  .bodySmall
+                  ?.copyWith(color: cs.outline),
             ),
           ),
         ],
@@ -126,16 +150,16 @@ class _AiSettingsPageState extends State<AiSettingsPage> {
   // ═══ 导航 ═══
 
   Future<void> _addProvider() async {
-    final created = await Navigator.push<AiProviderConfig>(
-      context, MaterialPageRoute(builder: (_) => const _ProviderEditPage()));
-    if (created == null) return;
-    _s.providers.add(created);
+    final result = await Navigator.push<_ProviderEditResult>(
+        context, MaterialPageRoute(builder: (_) => const _ProviderEditPage()));
+    if (result == null || result.deleted) return;
+    _s.providers.add(result.provider);
     await _persist();
   }
 
   Future<void> _editProvider(AiProviderConfig p) async {
-    final result = await Navigator.push<_ProviderEditResult>(
-      context, MaterialPageRoute(builder: (_) => _ProviderEditPage(existing: p)));
+    final result = await Navigator.push<_ProviderEditResult>(context,
+        MaterialPageRoute(builder: (_) => _ProviderEditPage(existing: p)));
     if (result == null) return;
     if (result.deleted) {
       _s.providers.removeWhere((e) => e.id == p.id);
@@ -171,7 +195,8 @@ class _AiSettingsPageState extends State<AiSettingsPage> {
   Future<bool?> _pushFeature(AiFeatureConfig f) {
     return Navigator.push<bool>(
       context,
-      MaterialPageRoute(builder: (_) => _FeatureEditPage(feature: f, settings: _s)),
+      MaterialPageRoute(
+          builder: (_) => _FeatureEditPage(feature: f, settings: _s)),
     );
   }
 
@@ -182,8 +207,12 @@ class _AiSettingsPageState extends State<AiSettingsPage> {
         title: const Text('删除功能'),
         content: Text('确定删除「${f.name}」?该操作不可撤销。'),
         actions: [
-          TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('取消')),
-          FilledButton(onPressed: () => Navigator.pop(ctx, true), child: const Text('删除')),
+          TextButton(
+              onPressed: () => Navigator.pop(ctx, false),
+              child: const Text('取消')),
+          FilledButton(
+              onPressed: () => Navigator.pop(ctx, true),
+              child: const Text('删除')),
         ],
       ),
     );
@@ -196,12 +225,14 @@ class _AiSettingsPageState extends State<AiSettingsPage> {
 
 // ── 通用小组件 ──
 
-Widget _sectionHeader(BuildContext context, String title, {VoidCallback? onAdd}) {
+Widget _sectionHeader(BuildContext context, String title,
+    {VoidCallback? onAdd}) {
   return Padding(
     padding: const EdgeInsets.fromLTRB(16, 12, 8, 4),
     child: Row(
       children: [
-        Expanded(child: Text(title, style: Theme.of(context).textTheme.titleSmall)),
+        Expanded(
+            child: Text(title, style: Theme.of(context).textTheme.titleSmall)),
         if (onAdd != null)
           TextButton.icon(
             onPressed: onAdd,
@@ -213,7 +244,8 @@ Widget _sectionHeader(BuildContext context, String title, {VoidCallback? onAdd})
   );
 }
 
-Widget _hintCard(BuildContext context, IconData icon, String title, String body) {
+Widget _hintCard(
+    BuildContext context, IconData icon, String title, String body) {
   final cs = Theme.of(context).colorScheme;
   return Card(
     margin: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
@@ -223,10 +255,12 @@ Widget _hintCard(BuildContext context, IconData icon, String title, String body)
         Icon(icon, size: 22, color: cs.primary),
         const SizedBox(width: 12),
         Expanded(
-          child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+          child:
+              Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
             Text(title, style: const TextStyle(fontWeight: FontWeight.w600)),
             const SizedBox(height: 4),
-            Text(body, style: TextStyle(fontSize: 12.5, color: cs.onSurfaceVariant)),
+            Text(body,
+                style: TextStyle(fontSize: 12.5, color: cs.onSurfaceVariant)),
           ]),
         ),
       ]),
@@ -267,7 +301,6 @@ class _ProviderEditPageState extends State<_ProviderEditPage> {
   bool _obscureKey = true;
   bool _testing = false;
   String? _testResult; // null=未测,空串=失败
-  bool _dirty = false;
 
   bool get _isNew => widget.existing == null;
 
@@ -284,17 +317,26 @@ class _ProviderEditPageState extends State<_ProviderEditPage> {
     _maxTok = TextEditingController(text: p?.maxTokens?.toString() ?? '');
     _path = TextEditingController(text: p?.customPath ?? '');
     _headers = TextEditingController(
-        text: (p?.customHeaders ?? {}).entries.map((e) => '${e.key}: ${e.value}').join('\n'));
+        text: (p?.customHeaders ?? {})
+            .entries
+            .map((e) => '${e.key}: ${e.value}')
+            .join('\n'));
     _stream = p?.stream ?? true;
     _enabled = p?.enabled ?? true;
-    for (final c in [_name, _base, _key, _model, _temp, _maxTok, _path, _headers]) {
-      c.addListener(() => _dirty = true);
-    }
   }
 
   @override
   void dispose() {
-    for (final c in [_name, _base, _key, _model, _temp, _maxTok, _path, _headers]) {
+    for (final c in [
+      _name,
+      _base,
+      _key,
+      _model,
+      _temp,
+      _maxTok,
+      _path,
+      _headers
+    ]) {
       c.dispose();
     }
     super.dispose();
@@ -302,7 +344,6 @@ class _ProviderEditPageState extends State<_ProviderEditPage> {
 
   void _applyType(AiProviderType t) {
     setState(() => _type = t);
-    _dirty = true;
     // 新建时按协议起个默认名,方便区分
     if (_isNew && _name.text.trim().isEmpty) _name.text = t.label;
   }
@@ -365,18 +406,28 @@ class _ProviderEditPageState extends State<_ProviderEditPage> {
         title: const Text('删除供应商'),
         content: const Text('已绑定此供应商的功能将变为未绑定状态。'),
         actions: [
-          TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('取消')),
-          FilledButton(onPressed: () => Navigator.pop(ctx, true), child: const Text('删除')),
+          TextButton(
+              onPressed: () => Navigator.pop(ctx, false),
+              child: const Text('取消')),
+          FilledButton(
+              onPressed: () => Navigator.pop(ctx, true),
+              child: const Text('删除')),
         ],
       ),
     );
-    if (ok == true && mounted) Navigator.pop(context, _ProviderEditResult(widget.existing!, deleted: true));
+    if (ok == true && mounted) {
+      Navigator.pop(
+          context, _ProviderEditResult(widget.existing!, deleted: true));
+    }
   }
 
   Future<void> _test() async {
     final p = _build();
     if (p == null) return;
-    setState(() { _testing = true; _testResult = null; });
+    setState(() {
+      _testing = true;
+      _testResult = null;
+    });
     try {
       final msg = await AiService.instance.testConnection(p);
       _testResult = msg;
@@ -393,112 +444,113 @@ class _ProviderEditPageState extends State<_ProviderEditPage> {
   @override
   Widget build(BuildContext context) {
     final cs = Theme.of(context).colorScheme;
-    return PopScope(
-      canPop: !_dirty,
-      onPopInvokedWithResult: (didPop, _) async {
-        if (didPop) return;
-        final ok = await showDialog<bool>(
-          context: context,
-          builder: (ctx) => AlertDialog(
-            title: const Text('放弃修改?'),
-            content: const Text('当前页面的修改尚未保存。'),
-            actions: [
-              TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('继续编辑')),
-              FilledButton(onPressed: () => Navigator.pop(ctx, true), child: const Text('放弃')),
+    return Scaffold(
+      appBar: AppBar(
+        title: Text(_isNew ? '添加供应商' : '编辑供应商'),
+        actions: [
+          if (!_isNew)
+            IconButton(
+                icon: const Icon(Icons.delete_outline),
+                tooltip: '删除',
+                onPressed: _delete),
+          TextButton(onPressed: _save, child: const Text('保存')),
+        ],
+      ),
+      body: ListView(
+        padding: const EdgeInsets.all(16),
+        children: [
+          DropdownButtonFormField<AiProviderType>(
+            value: _type,
+            decoration: const InputDecoration(
+              labelText: '接口类型',
+              border: OutlineInputBorder(),
+            ),
+            items: [
+              for (final t in AiProviderType.values)
+                DropdownMenuItem(value: t, child: Text(t.label)),
             ],
+            onChanged: (t) {
+              if (t != null) _applyType(t);
+            },
           ),
-        );
-        if (ok == true && context.mounted) Navigator.pop(context);
-      },
-      child: Scaffold(
-        appBar: AppBar(
-          title: Text(_isNew ? '添加供应商' : '编辑供应商'),
-          actions: [
-            if (!_isNew)
-              IconButton(icon: const Icon(Icons.delete_outline), tooltip: '删除', onPressed: _delete),
-            TextButton(onPressed: _save, child: const Text('保存')),
-          ],
-        ),
-        body: ListView(
-          padding: const EdgeInsets.all(16),
-          children: [
-            DropdownButtonFormField<AiProviderType>(
-              value: _type,
-              decoration: const InputDecoration(
-                labelText: '接口类型', border: OutlineInputBorder(),
-              ),
-              items: [
-                for (final t in AiProviderType.values)
-                  DropdownMenuItem(value: t, child: Text(t.label)),
-              ],
-              onChanged: (t) { if (t != null) _applyType(t); },
-            ),
-            const SizedBox(height: 14),
-            TextField(
-              controller: _name,
-              decoration: const InputDecoration(
-                labelText: '名称', hintText: '便于识别,如「我的中转站」', border: OutlineInputBorder()),
-            ),
-            const SizedBox(height: 14),
-            TextField(
-              controller: _base,
-              keyboardType: TextInputType.url,
-              decoration: InputDecoration(
+          const SizedBox(height: 14),
+          TextField(
+            controller: _name,
+            decoration: const InputDecoration(
+                labelText: '名称',
+                hintText: '便于识别,如「我的中转站」',
+                border: OutlineInputBorder()),
+          ),
+          const SizedBox(height: 14),
+          TextField(
+            controller: _base,
+            keyboardType: TextInputType.url,
+            decoration: InputDecoration(
                 labelText: 'API 地址 (Base URL)',
                 hintText: _type.baseUrlHint,
-                helperText: _type == AiProviderType.gemini ? '密钥通过 x-goog-api-key 头发送' : null,
+                helperText: _type == AiProviderType.gemini
+                    ? '密钥通过 x-goog-api-key 头发送'
+                    : null,
                 border: const OutlineInputBorder()),
-            ),
-            const SizedBox(height: 14),
-            TextField(
-              controller: _key,
-              obscureText: _obscureKey,
-              decoration: InputDecoration(
+          ),
+          const SizedBox(height: 14),
+          TextField(
+            controller: _key,
+            obscureText: _obscureKey,
+            decoration: InputDecoration(
                 labelText: 'API 密钥',
                 border: const OutlineInputBorder(),
                 suffixIcon: IconButton(
-                  icon: Icon(_obscureKey ? Icons.visibility_off : Icons.visibility),
+                  icon: Icon(
+                      _obscureKey ? Icons.visibility_off : Icons.visibility),
                   onPressed: () => setState(() => _obscureKey = !_obscureKey),
                 )),
-            ),
-            const SizedBox(height: 14),
-            TextField(
-              controller: _model,
-              decoration: InputDecoration(
-                  labelText: '模型', hintText: _type.modelHint, border: const OutlineInputBorder()),
-            ),
-            const SizedBox(height: 14),
-            Row(children: [
-              Expanded(
-                child: TextField(
-                  controller: _temp,
-                  keyboardType: const TextInputType.numberWithOptions(decimal: true),
-                  decoration: const InputDecoration(
-                      labelText: '温度 (可选)', hintText: '留空不发送', border: OutlineInputBorder()),
-                ),
+          ),
+          const SizedBox(height: 14),
+          TextField(
+            controller: _model,
+            decoration: InputDecoration(
+                labelText: '模型',
+                hintText: _type.modelHint,
+                border: const OutlineInputBorder()),
+          ),
+          const SizedBox(height: 14),
+          Row(children: [
+            Expanded(
+              child: TextField(
+                controller: _temp,
+                keyboardType:
+                    const TextInputType.numberWithOptions(decimal: true),
+                decoration: const InputDecoration(
+                    labelText: '温度 (可选)',
+                    hintText: '留空不发送',
+                    border: OutlineInputBorder()),
               ),
-              const SizedBox(width: 12),
-              Expanded(
-                child: TextField(
-                  controller: _maxTok,
-                  keyboardType: TextInputType.number,
-                  decoration: const InputDecoration(
-                      labelText: '最大输出 tokens (可选)', hintText: '留空不发送', border: OutlineInputBorder()),
-                ),
-              ),
-            ]),
-            const SizedBox(height: 4),
-            SwitchListTile(
-              contentPadding: EdgeInsets.zero,
-              title: const Text('流式输出'),
-              subtitle: const Text('边生成边显示;个别兼容端点不支持时可关闭'),
-              value: _stream,
-              onChanged: (v) => setState(() { _stream = v; _dirty = true; }),
             ),
-            const Divider(height: 24),
-            TextField(
-              controller: _path,
-              decoration: InputDecoration(
+            const SizedBox(width: 12),
+            Expanded(
+              child: TextField(
+                controller: _maxTok,
+                keyboardType: TextInputType.number,
+                decoration: const InputDecoration(
+                    labelText: '最大输出 tokens (可选)',
+                    hintText: '留空不发送',
+                    border: OutlineInputBorder()),
+              ),
+            ),
+          ]),
+          const SizedBox(height: 4),
+          SwitchListTile(
+            contentPadding: EdgeInsets.zero,
+            title: const Text('流式输出'),
+            subtitle: const Text('边生成边显示;个别兼容端点不支持时可关闭'),
+            value: _stream,
+            onChanged: (v) => setState(() => _stream = v),
+          ),
+          const Divider(height: 24),
+          TextField(
+            controller: _path,
+            decoration: InputDecoration(
                 labelText: '自定义请求路径 (可选)',
                 hintText: _type == AiProviderType.gemini
                     ? '/v1beta/models/{model}:streamGenerateContent?alt=sse'
@@ -507,39 +559,43 @@ class _ProviderEditPageState extends State<_ProviderEditPage> {
                         : '/chat/completions',
                 helperText: '留空使用协议默认路径;{model} 会被替换为模型名;可含 ?query',
                 border: const OutlineInputBorder()),
-            ),
-            const SizedBox(height: 14),
-            TextField(
-              controller: _headers,
-              maxLines: 3,
-              decoration: const InputDecoration(
+          ),
+          const SizedBox(height: 14),
+          TextField(
+            controller: _headers,
+            maxLines: 3,
+            decoration: const InputDecoration(
                 labelText: '自定义请求头 (可选)',
-                hintText: '每行一条,格式 Key: Value\n例如 anthropic-beta: prompt-caching-2024-07-31',
+                hintText:
+                    '每行一条,格式 Key: Value\n例如 anthropic-beta: prompt-caching-2024-07-31',
                 border: OutlineInputBorder()),
+          ),
+          SwitchListTile(
+            contentPadding: EdgeInsets.zero,
+            title: const Text('启用此供应商'),
+            value: _enabled,
+            onChanged: (v) => setState(() => _enabled = v),
+          ),
+          const SizedBox(height: 8),
+          OutlinedButton.icon(
+            onPressed: _testing ? null : _test,
+            icon: _testing
+                ? const SizedBox(
+                    width: 16,
+                    height: 16,
+                    child: CircularProgressIndicator(strokeWidth: 2))
+                : const Icon(Icons.network_check),
+            label: Text(_testResult == null
+                ? '测试连接'
+                : (_testResult!.isEmpty ? '重试' : '再测一次')),
+          ),
+          if (_testResult != null && _testResult!.isNotEmpty)
+            Padding(
+              padding: const EdgeInsets.only(top: 8),
+              child: Text(_testResult!,
+                  style: TextStyle(color: cs.primary, fontSize: 13)),
             ),
-            SwitchListTile(
-              contentPadding: EdgeInsets.zero,
-              title: const Text('启用此供应商'),
-              value: _enabled,
-              onChanged: (v) => setState(() { _enabled = v; _dirty = true; }),
-            ),
-            const SizedBox(height: 8),
-            OutlinedButton.icon(
-              onPressed: _testing ? null : _test,
-              icon: _testing
-                  ? const SizedBox(width: 16, height: 16, child: CircularProgressIndicator(strokeWidth: 2))
-                  : const Icon(Icons.network_check),
-              label: Text(_testResult == null
-                  ? '测试连接'
-                  : (_testResult!.isEmpty ? '重试' : '再测一次')),
-            ),
-            if (_testResult != null && _testResult!.isNotEmpty)
-              Padding(
-                padding: const EdgeInsets.only(top: 8),
-                child: Text(_testResult!, style: TextStyle(color: cs.primary, fontSize: 13)),
-              ),
-          ],
-        ),
+        ],
       ),
     );
   }
@@ -584,15 +640,18 @@ class _FeatureEditPageState extends State<_FeatureEditPage> {
 
   @override
   void dispose() {
-    _name.dispose(); _model.dispose(); _system.dispose(); _user.dispose();
+    _name.dispose();
+    _model.dispose();
+    _system.dispose();
+    _user.dispose();
     super.dispose();
   }
 
   void _save() {
     final f = _f;
     if (_f.enabled && _providerId.isEmpty) {
-      ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('启用功能前请先绑定供应商')));
+      ScaffoldMessenger.of(context)
+          .showSnackBar(const SnackBar(content: Text('启用功能前请先绑定供应商')));
       return;
     }
     f.name = _name.text.trim().isEmpty ? f.id : _name.text.trim();
@@ -606,7 +665,8 @@ class _FeatureEditPageState extends State<_FeatureEditPage> {
 
   @override
   Widget build(BuildContext context) {
-    final providers = widget.settings.providers.where((p) => p.enabled).toList();
+    final providers =
+        widget.settings.providers.where((p) => p.enabled).toList();
     return Scaffold(
       appBar: AppBar(
         title: Text(_builtin ? '编辑功能 · ${_f.name}' : '自定义功能'),
@@ -639,7 +699,8 @@ class _FeatureEditPageState extends State<_FeatureEditPage> {
             items: [
               const DropdownMenuItem(value: '', child: Text('未选择')),
               for (final p in providers)
-                DropdownMenuItem(value: p.id, child: Text('${p.name} (${p.model.trim()})')),
+                DropdownMenuItem(
+                    value: p.id, child: Text('${p.name} (${p.model.trim()})')),
             ],
             onChanged: (v) => setState(() => _providerId = v ?? ''),
           ),
@@ -684,7 +745,8 @@ class _FeatureEditPageState extends State<_FeatureEditPage> {
             ),
           ] else
             _hintCard(
-              context, Icons.forum_outlined,
+              context,
+              Icons.forum_outlined,
               '自由对话模式',
               '对话页的输入框即此功能;系统提示词中的 {title} / {content} 会在对话开始时替换为当前文档。',
             ),
