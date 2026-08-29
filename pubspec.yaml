@@ -34,6 +34,8 @@ dependencies:
   dynamic_color: 1.6.9
   # 权限申请
   permission_handler: ^11.3.0
+  # 注解(@visibleForTesting)
+  meta: ^1.10.0
 
 dev_dependencies:
   flutter_test:

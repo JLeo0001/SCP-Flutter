@@ -155,6 +155,13 @@ class PreferenceService {
   static void setShowMeal(bool v) => _prefs.setBool('show_meal', v);
 
   // ═══════════════════════════════════════
+  //  AI 助手设置 (存储 JSON,模型见 core/ai/ai_models.dart)
+  // ═══════════════════════════════════════
+
+  static String getAiSettingsJson() => _prefs.getString('ai_settings') ?? '';
+  static Future<void> setAiSettingsJson(String v) => _prefs.setString('ai_settings', v);
+
+  // ═══════════════════════════════════════
   //  离线数据优先
   // ═══════════════════════════════════════
 

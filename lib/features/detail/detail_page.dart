@@ -6,6 +6,9 @@ import 'package:flutter/services.dart';
 import 'package:webview_flutter/webview_flutter.dart';
 import 'package:url_launcher/url_launcher.dart';
 import '../../core/constants.dart';
+import '../../core/ai/ai_models.dart';
+import '../../core/ai/article_text.dart';
+import '../ai/ai_chat_page.dart';
 import '../../core/backend/backend_service.dart';
 import '../../core/backend/backend_types.dart';
 import '../../core/services/database_helper.dart';
@@ -1202,6 +1205,30 @@ $content
     if (mounted) setState(() {});
   }
 
+  /// 打开 AI 助手(上下文 = 当前文档纯文本,配色跟随阅读主题)
+  void _openAiAssistant() {
+    final html = _detailHtml;
+    if (html == null || html.isEmpty) {
+      _snack('内容尚未加载');
+      return;
+    }
+    final pal = _ReadingPalette.of(
+        PreferenceService.getReadingTheme(), Theme.of(context).brightness);
+    Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (_) => AiChatPage(
+          docTitle: widget.title,
+          articleText: ArticleText.extract(html),
+          bg: pal.bgColor,
+          fg: pal.fgColor,
+          border: pal.borderColor,
+          dark: pal.isDarkTheme,
+        ),
+      ),
+    );
+  }
+
   void _openInBrowser() async {
     final url = '${SCPConstants.scpSiteUrl}/$_cleanLink';
     if (await canLaunchUrl(Uri.parse(url))) {
@@ -1240,6 +1267,8 @@ $content
         actions: [
           if (_toc.length >= 2)
             IconButton(icon: const Icon(Icons.list_alt, size: 20), tooltip: '目录', onPressed: _showToc),
+          if (AiSettingsStore.available(AiSettingsStore.reload()))
+            IconButton(icon: const Icon(Icons.auto_awesome, size: 20), tooltip: 'AI 助手', onPressed: _openAiAssistant),
           IconButton(icon: const Icon(Icons.settings, size: 20), tooltip: '阅读设置', onPressed: _showSettings),
           PopupMenuButton<String>(
             onSelected: (v) {

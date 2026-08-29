@@ -11,6 +11,7 @@ import '../../core/services/preference_service.dart';
 import '../../core/services/database_helper.dart';
 import '../../core/utils/route_observer.dart';
 import '../../core/constants.dart';
+import '../ai/ai_settings_page.dart';
 import '../detail/detail_page.dart';
 
 /// 用户页 — 对应 UserFragment.kt
@@ -313,6 +314,15 @@ class _UserPageState extends State<UserPage>
                 MaterialPageRoute(builder: (_) => const DownloadPage()));
           }),
           const Divider(),
+          _buildMenuItem(
+            Icons.auto_awesome,
+            'AI 设置',
+            () {
+              Navigator.push(context,
+                  MaterialPageRoute(builder: (_) => const AiSettingsPage()));
+            },
+            trailing: const Icon(Icons.chevron_right),
+          ),
           _buildMenuItem(
             _themeIcon(),
             _themeLabel(),
