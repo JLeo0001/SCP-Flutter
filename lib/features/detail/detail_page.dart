@@ -242,28 +242,72 @@ class _DetailPageState extends State<DetailPage> with WidgetsBindingObserver {
     try {
       await ctrl.setBackgroundColor(pal.bgColor); // 加载期间避免白闪
     } catch (_) {}
-    String darkFixJs = isDark ? '''
-window.addEventListener('DOMContentLoaded',function(){
-  setTimeout(function(){
-    var bodyBg=getComputedStyle(document.body).backgroundColor;
-    function isDarkBg(c){var m=c.match(/\\d+/g);if(!m||m.length<3)return false;
-      var r=parseInt(m[0]),g=parseInt(m[1]),b=parseInt(m[2]);
-      return 0.2126*r/255+0.7152*g/255+0.0722*b/255<0.35;}
-    if(!isDarkBg(bodyBg))return;
-    function lum(r,g,b){return 0.2126*r/255+0.7152*g/255+0.0722*b/255;}
-    document.querySelectorAll('*').forEach(function(el){
-      if(el.nodeType!==1)return;
-      var t=el.tagName;if(t==='A'||t==='IMG'||t==='INPUT'||t==='BUTTON'||t==='SELECT'||t==='SCRIPT'||t==='STYLE')return;
-      if(el.closest('a')||el.closest('pre')||el.closest('code'))return;
-      var bg=getComputedStyle(el).backgroundColor;
-      if(bg&&bg!=='rgba(0, 0, 0, 0)'&&bg!=='transparent'&&isDarkBg(bg)===isDarkBg(bodyBg))return;
-      var cl=getComputedStyle(el).color;
-      var m=cl.match(/\\d+/g);if(!m||m.length<3)return;
-      var r=parseInt(m[0]),g=parseInt(m[1]),b=parseInt(m[2]);
-      if(lum(r,g,b)<0.35)el.style.setProperty('color','$textColor','important');
+    // 深色反转补丁：只要"实际生效"的阅读主题是深色就注入（此前只看系统 isDark，
+    // 系统浅色 + 手动选深色主题时，作者内联的浅色卡片会变成浅色字压浅色背景）
+    String darkFixJs = pal.isDarkTheme ? '''
+(function(){
+  function apply(){
+    var nodes=[].slice.call(document.querySelectorAll('*'));
+    // ── 第一遍（父先子后）：作者硬编码的浅色背景一律压成主题 blockBg ──
+    // 判据只看"元素自己是否画了背景"（计算值，不区分 class / 内联 style 写法），
+    // 因此对所有文档里的浅灰卡片、浅色表格、提示块通用
+    nodes.forEach(function(el){
+      var t=el.tagName;
+      if(t==='HTML'||t==='BODY'||t==='SCRIPT'||t==='STYLE'||t==='META'||t==='LINK'||t==='IMG')return;
+      // 阅读器自身的浮层（进度条/标尺/灯箱/脚注卡）用的是主题强调色，不能被压成 blockBg
+      if(el.id&&el.id.indexOf('_')===0)return;
+      var cs=getComputedStyle(el);
+      var bg=cs.backgroundColor;
+      if(!bg||bg==='rgba(0, 0, 0, 0)'||bg==='transparent')return;
+      var m=bg.match(/(\\d+)[^\\d]+(\\d+)[^\\d]+(\\d+)/);
+      if(!m)return;
+      var R=+m[1],G=+m[2],B=+m[3];
+      if(0.2126*R+0.7152*G+0.0722*B<128)return;
+      el.style.setProperty('background-color','$blockBg','important');
+      var bd=cs.borderTopColor;
+      if(parseFloat(cs.borderTopWidth)>0&&bd&&bd!=='rgba(0, 0, 0, 0)'){
+        el.style.setProperty('border-color','$blockBorder','important');
+      }
     });
-  },150);
-});
+    // ── 第二遍（子先父后）：作者为浅底准备的深色文字 → 提亮 ──
+    // 只处理"元素自己显式设过 color"的（getOwnPropertyDescriptor 可区分作者写的与继承的），
+    // 普通正文继承 body 的浅色字，无需干预
+    nodes.slice().reverse().forEach(function(el){
+      var t=el.tagName;
+      if(t==='HTML'||t==='BODY'||t==='SCRIPT'||t==='STYLE'||t==='A'||t==='IMG')return;
+      if(el.closest('pre')||el.closest('code'))return;
+      var d=Object.getOwnPropertyDescriptor(el.style,'color');
+      if(!d||!d.value||!d.value.trim())return;
+      var cl=getComputedStyle(el).color;
+      var m=cl.match(/(\\d+)[^\\d]+(\\d+)[^\\d]+(\\d+)/);
+      if(!m)return;
+      var R=+m[1],G=+m[2],B=+m[3];
+      var mx=Math.max(R,G,B),mn=Math.min(R,G,B);
+      var sat=mx===0?0:(mx-mn)/mx;
+      // 保留作者强调色（红/蓝等饱和色常被当语义用），只反转低饱和的灰黑字；
+      // 阈值放宽到 160：作者写 #999 这类"弱化灰"是给浅底用的，压暗后会看不清
+      if(0.2126*R+0.7152*G+0.0722*B<160&&sat<=0.30){
+        el.style.setProperty('color','$textColor','important');
+      }
+    });
+    // ── 链接：按"脚下背景"决定深浅（Wikidot 的 a 常带 !important 内联色）──
+    [].slice.call(document.querySelectorAll('a')).forEach(function(a){
+      if(a.closest('pre')||a.closest('code'))return;
+      var e=a,bg=null;
+      while(e&&e.nodeType===1){
+        var c=getComputedStyle(e).backgroundColor;
+        if(c&&c!=='rgba(0, 0, 0, 0)'&&c!=='transparent'){var mm=c.match(/(\\d+)[^\\d]+(\\d+)[^\\d]+(\\d+)/);if(mm){bg=mm;break;}}
+        e=e.parentElement;
+      }
+      var light=bg?(0.2126*(+bg[1])+0.7152*(+bg[2])+0.0722*(+bg[3]))>=128:false;
+      a.style.setProperty('color',light?'#1565c0':'$linkColor','important');
+    });
+  }
+  function run(){ try{apply();}catch(e){} }
+  if(document.readyState==='loading'){document.addEventListener('DOMContentLoaded',run);}else{run();}
+  // 图片延迟加载会撑开布局，稍后再收敛一次
+  setTimeout(run,400);
+})();
 ''' : '';
 
     final html = '''
@@ -386,7 +430,9 @@ $customFontFaces
   /* ═══ Wikidot class compatibility ═══ */
   .wiki-content-table td, .wiki-content-table th,
   .content-panel, .info-container, .notice-block,
-  .rating span, .odialog-shader, .yui-navset {
+  .rating span, .odialog-shader, .yui-navset,
+  [style*="background:#f0eeee"], [style*="background: #f0eeee"],
+  [style*="background-color:#f0eeee"], [style*="background-color: #f0eeee"] {
     color: $textColor !important;
     background-color: $blockBg !important;
   }
