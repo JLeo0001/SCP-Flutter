@@ -570,9 +570,9 @@ class _AiChatPageState extends State<AiChatPage> {
           ),
         const SizedBox(height: 4),
         Row(mainAxisSize: MainAxisSize.min, children: [
-          if (!m.streaming && m.text.isNotEmpty && !m.error)
+          if (!m.streaming && m.text.isNotEmpty)
             _miniBtn(Icons.copy, '复制', sub, () => _copy(m.text)),
-          if (isLast && !m.streaming && !m.error && !_generating && m.req != null)
+          if (isLast && !m.streaming && !_generating && m.req != null)
             _miniBtn(Icons.refresh, '重新生成', sub, () => _regenerate(index)),
           if (m.streaming)
             Text('生成中…', style: TextStyle(fontSize: 11, color: sub)),
@@ -649,7 +649,7 @@ class _AiChatPageState extends State<AiChatPage> {
           duration: const Duration(milliseconds: 150),
           curve: Curves.easeInOutCubic,
           alignment: Alignment.topCenter,
-          child: (m.reasoningOpen || thinking)
+          child: m.reasoningOpen
               ? Container(
                   width: double.infinity,
                   margin: const EdgeInsets.only(top: 2, bottom: 6),
