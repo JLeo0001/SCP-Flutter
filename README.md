@@ -11,7 +11,8 @@
   <img src="https://img.shields.io/badge/Android-5%2B-34A853?logo=android&logoColor=white&style=flat-square" alt="Android 5+"/>
   <br>
   <img src="https://img.shields.io/badge/包名-com.jleoz.scp-FF6F00?style=flat-square" alt="Package"/>
-  <img src="https://img.shields.io/badge/license-CC_BY--SA_3.0-yellow?style=flat-square" alt="License"/>
+  <img src="https://img.shields.io/badge/code_license-GPL--3.0-blue?style=flat-square" alt="Code License: GPL-3.0"/>
+  <img src="https://img.shields.io/badge/content_license-CC_BY--SA_3.0-yellow?style=flat-square" alt="Content License: CC BY-SA 3.0"/>
 </p>
 
 <p align="center">
@@ -247,7 +248,9 @@ lib/
 
 ## 📄 许可
 
-应用内内容遵循 **CC-BY-SA 3.0** 协议；简繁转换词典基于 **OpenCC**（[Apache-2.0](https://www.apache.org/licenses/LICENSE-2.0)）数据。
+- **应用代码**：以 [**GPL-3.0-or-later**](LICENSE) 许可发布。
+- **应用内 SCP 内容**：遵循 **CC-BY-SA 3.0** 协议，内容版权归原作者所有。
+- **简繁转换词典**：基于 **OpenCC**（[Apache-2.0](https://www.apache.org/licenses/LICENSE-2.0)）数据。
 
 ---
 

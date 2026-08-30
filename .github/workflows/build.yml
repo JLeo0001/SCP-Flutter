@@ -88,12 +88,8 @@ jobs:
             echo 'keyAlias=${{ secrets.KEY_ALIAS }}' >> android/key.properties
             echo 'storeFile=../../publish.keystore' >> android/key.properties
           fi
-          if [ ! -f android/key.properties ] && [ -f publish.keystore ]; then
-            echo 'storePassword=123456zxl' > android/key.properties
-            echo 'keyPassword=123456zxl' >> android/key.properties
-            echo 'keyAlias=appkey' >> android/key.properties
-            echo 'storeFile=../../publish.keystore' >> android/key.properties
-            echo "Created key.properties from repo keystore"
+          if [ ! -f android/key.properties ]; then
+            echo "::warning::未设置签名 Secrets (KEYSTORE_BASE64 等),本次构建将回退到 debug 签名,产物不可用于发布"
           fi
 
       - name: Build Universal APK
