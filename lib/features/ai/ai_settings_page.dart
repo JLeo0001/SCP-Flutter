@@ -42,38 +42,60 @@ class _AiSettingsPageState extends State<AiSettingsPage> {
             _hintCard(context, Icons.extension, '尚未配置 AI 供应商',
                 '点击右上角「添加」新建一个供应商,填入 API 地址、密钥与模型。支持 OpenAI 兼容接口、Anthropic Claude 与 Google Gemini。')
           else
-            for (final p in _s.providers)
-              ListTile(
-                leading: Icon(
-                  p.type == AiProviderType.openai
-                      ? Icons.hub
-                      : p.type == AiProviderType.claude
-                          ? Icons.auto_awesome
-                          : Icons.diamond_outlined,
-                  color: p.enabled ? cs.primary : cs.outlineVariant,
-                ),
-                title:
-                    Text(p.name, maxLines: 1, overflow: TextOverflow.ellipsis),
-                subtitle: Text(
-                  '${p.type.label} · ${p.model.trim().isEmpty ? "未填模型" : p.model.trim()}',
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                ),
-                trailing: Switch(
-                    value: p.enabled,
-                    onChanged: (v) {
-                      p.enabled = v;
-                      _persist();
-                    }),
-                onTap: () => _editProvider(p),
-              ),
+            ReorderableListView(
+              shrinkWrap: true,
+              physics: const NeverScrollableScrollPhysics(),
+              onReorder: (oldI, newI) {
+                setState(() {
+                  if (newI > oldI) newI -= 1;
+                  final item = _s.providers.removeAt(oldI);
+                  _s.providers.insert(newI, item);
+                });
+                _persist();
+              },
+              children: [
+                for (final p in _s.providers)
+                  ListTile(
+                    key: ValueKey(p.id),
+                    leading: Icon(
+                      p.type == AiProviderType.openai
+                          ? Icons.hub
+                          : p.type == AiProviderType.claude
+                              ? Icons.auto_awesome
+                              : Icons.diamond_outlined,
+                      color: p.enabled ? cs.primary : cs.outlineVariant,
+                    ),
+                    title:
+                        Text(p.name, maxLines: 1, overflow: TextOverflow.ellipsis),
+                    subtitle: Text(
+                      '${p.type.label} · ${p.model.trim().isEmpty ? "未填模型" : p.model.trim()}',
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                    trailing: Switch(
+                        value: p.enabled,
+                        onChanged: (v) {
+                          p.enabled = v;
+                          _persist();
+                        }),
+                    onTap: () => _editProvider(p),
+                  ),
+              ],
+            ),
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 2),
+            child: Text(
+              '长按拖动可排序;自由对话默认使用最上方的启用供应商。',
+              style: Theme.of(context).textTheme.bodySmall?.copyWith(color: cs.outline),
+            ),
+          ),
           const Divider(),
           _sectionHeader(context, '功能', onAdd: _addCustomFeature),
           if (_s.features.isEmpty)
             _hintCard(
                 context, Icons.tune, '没有可用功能', '添加自定义功能后,会显示为阅读页 AI 助手里的快捷操作。')
           else
-            for (final f in _s.features)
+            for (final f in _s.features.where((f) => f.id != 'chat'))
               ListTile(
                 leading: Icon(_featureIcon(f.id),
                     color: f.enabled ? cs.primary : cs.outlineVariant),
@@ -621,7 +643,7 @@ class _FeatureEditPageState extends State<_FeatureEditPage> {
   late final TextEditingController _system;
   late final TextEditingController _user;
   String _providerId = '';
-  bool _context = true;
+  String _contextMode = 'inject';
 
   bool get _isChat => _f.id == 'chat';
   bool get _builtin => _f.builtin;
@@ -635,7 +657,7 @@ class _FeatureEditPageState extends State<_FeatureEditPage> {
     _system = TextEditingController(text: _f.systemPrompt);
     _user = TextEditingController(text: _f.userPromptTemplate);
     _providerId = _f.providerId;
-    _context = _f.useArticleContext;
+    _contextMode = _f.contextMode;
   }
 
   @override
@@ -657,7 +679,8 @@ class _FeatureEditPageState extends State<_FeatureEditPage> {
     f.name = _name.text.trim().isEmpty ? f.id : _name.text.trim();
     f.providerId = _providerId;
     f.model = _model.text.trim();
-    f.useArticleContext = _context;
+    f.contextMode = _contextMode;
+    f.useArticleContext = _contextMode == 'inject';
     f.systemPrompt = _system.text;
     f.userPromptTemplate = _isChat ? '' : _user.text;
     Navigator.pop(context, true);
@@ -713,12 +736,25 @@ class _FeatureEditPageState extends State<_FeatureEditPage> {
               border: const OutlineInputBorder(),
             ),
           ),
-          SwitchListTile(
-            contentPadding: EdgeInsets.zero,
-            title: const Text('携带文档上下文'),
-            subtitle: const Text('自动把当前阅读的文档标题与正文填入 {title} / {content}'),
-            value: _context,
-            onChanged: (v) => setState(() => _context = v),
+          DropdownButtonFormField<String>(
+            value: _contextMode,
+            decoration: const InputDecoration(
+                labelText: '文档上下文模式', border: OutlineInputBorder()),
+            items: const [
+              DropdownMenuItem(value: 'inject', child: Text('注入正文(默认,兼容性最好)')),
+              DropdownMenuItem(value: 'tool', child: Text('工具读取(省 token)')),
+              DropdownMenuItem(value: 'none', child: Text('不携带文档')),
+            ],
+            onChanged: (v) => setState(() => _contextMode = v ?? 'inject'),
+          ),
+          const SizedBox(height: 6),
+          Text(
+            _contextMode == 'tool'
+                ? 'AI 通过 read_document 工具自行分段读取正文,需要供应商支持 Function Calling;对话短回复时显著省 token。'
+                : _contextMode == 'none'
+                    ? '提示词中的 {title} / {content} 会被置空。'
+                    : '自动把当前阅读的文档标题与正文填入 {title} / {content} 占位符。',
+            style: TextStyle(fontSize: 12, color: Theme.of(context).colorScheme.outline),
           ),
           const Divider(height: 24),
           Text('系统提示词 (System)', style: Theme.of(context).textTheme.titleSmall),

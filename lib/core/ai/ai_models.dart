@@ -28,15 +28,15 @@ extension AiProviderTypeX on AiProviderType {
 
   /// 仅作为输入框 hint 提示,不会预填进配置
   String get baseUrlHint => switch (this) {
-        AiProviderType.openai => 'https://api.openai.com/v1 或任意兼容端点',
+        AiProviderType.openai => 'https://api.openai.com/v1',
         AiProviderType.claude => 'https://api.anthropic.com',
         AiProviderType.gemini => 'https://generativelanguage.googleapis.com',
       };
 
   String get modelHint => switch (this) {
-        AiProviderType.openai => '例如 gpt-4o-mini / deepseek-chat ...',
-        AiProviderType.claude => '例如 claude-sonnet-4-5 ...',
-        AiProviderType.gemini => '例如 gemini-2.0-flash ...',
+        AiProviderType.openai => '例如 deepseek-v4-flash',
+        AiProviderType.claude => '例如 claude-sonnet-4-5',
+        AiProviderType.gemini => '例如 gemini-2.0-flash',
       };
 
   static AiProviderType fromId(String? id) => switch (id) {
@@ -131,6 +131,7 @@ class AiFeatureConfig {
   String providerId; // 关联 AiProviderConfig.id,空 = 未配置
   String model; // 覆盖供应商默认模型,空 = 用供应商的
   bool useArticleContext; // 自动携带当前阅读的文档正文
+  String contextMode; // inject=注入提示词 | tool=工具读取(省 token) | none=不携带
   String systemPrompt;
   String userPromptTemplate; // chat 功能为空(自由对话)
 
@@ -142,6 +143,7 @@ class AiFeatureConfig {
     this.providerId = '',
     this.model = '',
     this.useArticleContext = true,
+    this.contextMode = 'inject',
     this.systemPrompt = '',
     this.userPromptTemplate = '',
   });
@@ -154,6 +156,7 @@ class AiFeatureConfig {
         'providerId': providerId,
         'model': model,
         'useArticleContext': useArticleContext,
+        'contextMode': contextMode,
         'systemPrompt': systemPrompt,
         'userPromptTemplate': userPromptTemplate,
       };
@@ -166,6 +169,7 @@ class AiFeatureConfig {
         providerId: (j['providerId'] ?? '') as String,
         model: (j['model'] ?? '') as String,
         useArticleContext: (j['useArticleContext'] ?? true) as bool,
+        contextMode: (j['contextMode'] ?? 'inject') as String,
         systemPrompt: (j['systemPrompt'] ?? '') as String,
         userPromptTemplate: (j['userPromptTemplate'] ?? '') as String,
       );
@@ -202,6 +206,7 @@ class AiSettings {
           id: 'summary',
           name: '内容摘要',
           builtin: true,
+          contextMode: 'inject',
           systemPrompt: '你是 SCP 基金会文档的阅读助手,默认使用中文回答。忠实于原文,不要编造文档中不存在的内容。',
           userPromptTemplate:
               '请阅读以下文档,输出结构化摘要:\n'
@@ -216,6 +221,7 @@ class AiSettings {
           id: 'translate',
           name: '翻译',
           builtin: true,
+          contextMode: 'inject',
           systemPrompt: '你是专业翻译,熟悉 SCP 基金会的术语与文风。',
           userPromptTemplate:
               '将以下内容翻译为中文(若原文已是中文,则翻译为英文)。'
@@ -225,6 +231,7 @@ class AiSettings {
           id: 'explain',
           name: '名词解释',
           builtin: true,
+          contextMode: 'inject',
           systemPrompt: '你是 SCP 基金会设定百科,熟悉基金会宇宙的世界观、术语与著名条目。',
           userPromptTemplate:
               '阅读以下文档,解释其中出现的专有名词、缩写、内部梗与设定(如基金会部门、等级制度、著名异常项目等)。'
@@ -235,6 +242,7 @@ class AiSettings {
           id: 'chat',
           name: '自由对话',
           builtin: true,
+          contextMode: 'tool', // 对话默认工具读取,省 token
           systemPrompt:
               '你是 SCP 基金会文档的阅读助手。用户正在阅读一篇文档,请结合文档内容回答问题;文档未提及的信息请明确说明"文档未提及",不要编造。\n\n'
               '文档标题:{title}\n\n文档正文:\n{content}',
@@ -244,18 +252,48 @@ class AiSettings {
 
   // ── 查询 ──
 
-  /// 已启用且供应商可解析、模型可用的功能(阅读页快捷入口用;chat 同时作为对话模式开关)
+  /// 已启用且供应商可解析的快捷功能(不含自由对话;阅读页快捷入口用)
   List<AiFeatureConfig> effectiveFeatures() {
     if (!masterEnabled) return [];
     return features.where((f) {
-      if (!f.enabled) return false;
+      if (!f.enabled || f.id == 'chat') return false;
       final p = providerById(f.providerId);
       return p != null && p.enabled && p.model.trim().isNotEmpty && p.baseUrl.trim().isNotEmpty;
     }).toList();
   }
 
-  /// 是否已在任何层面完成配置(决定设置页提示与阅读页入口)
+  /// 至少一个可用的启用供应商(决定阅读页 AI 入口是否显示)
+  bool get isAvailable =>
+      masterEnabled &&
+      providers.any((p) => p.enabled && p.baseUrl.trim().isNotEmpty && p.model.trim().isNotEmpty);
+
+  /// 是否已在任何层面完成配置(设置页提示用)
   bool get hasAnyProvider => providers.any((p) => p.baseUrl.trim().isNotEmpty && p.model.trim().isNotEmpty);
+
+  /// 自由对话能力:不作为功能开关,配置了供应商即可用。
+  /// 优先使用对话自己绑定的供应商(若仍可解析),否则默认列表最上方的启用供应商。
+  ({AiProviderConfig provider, AiFeatureConfig feature})? chatCapability() {
+    if (!masterEnabled) return null;
+    AiFeatureConfig f;
+    try {
+      f = features.firstWhere((e) => e.id == 'chat');
+    } catch (_) {
+      f = AiSettings.defaultFeatures().firstWhere((e) => e.id == 'chat');
+    }
+    AiProviderConfig? p = providerById(f.providerId);
+    bool usable(AiProviderConfig c) =>
+        c.enabled && c.baseUrl.trim().isNotEmpty && c.model.trim().isNotEmpty;
+    if (p == null || !usable(p)) {
+      for (final c in providers) {
+        if (usable(c)) {
+          p = c;
+          break;
+        }
+      }
+    }
+    if (p == null || !usable(p)) return null;
+    return (provider: p, feature: f);
+  }
 
   AiProviderConfig? providerById(String id) {
     for (final p in providers) {
@@ -283,9 +321,15 @@ class AiSettings {
       final loaded = (j['features'] as List? ?? [])
           .map((e) => AiFeatureConfig.fromJson(e as Map<String, dynamic>))
           .toList();
-      // 内置功能补齐(升级/旧数据缺项),已有配置优先
+      // 内置功能补齐(升级/旧数据缺项),已有配置优先;chat 无 contextMode 时默认工具读取
       for (final d in defaults) {
         if (!loaded.any((f) => f.id == d.id)) loaded.add(d);
+      }
+      for (final f in loaded) {
+        if (f.id == 'chat' && !(j['features'] as List? ?? []).any((e) =>
+            e is Map && e['id'] == 'chat' && e['contextMode'] != null)) {
+          f.contextMode = 'tool';
+        }
       }
       return AiSettings(
         masterEnabled: (j['masterEnabled'] ?? false) as bool,
@@ -320,6 +364,6 @@ class AiSettingsStore {
     await PreferenceService.setAiSettingsJson(s.toJsonString());
   }
 
-  /// 判断当前是否可用(阅读页是否显示 AI 入口):总开 + 至少一个可用功能
-  static bool available(AiSettings s) => s.effectiveFeatures().isNotEmpty;
+  /// 判断当前是否可用(阅读页是否显示 AI 入口):总开 + 至少一个可用供应商
+  static bool available(AiSettings s) => s.isAvailable;
 }

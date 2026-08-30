@@ -336,4 +336,204 @@ void main() {
       expect(ArticleText.truncateMiddle('short', 200), 'short');
     });
   });
+
+  group('chatCapability(自由对话默认最顶部供应商)', () {
+    AiProviderConfig mkProv(String id, {bool enabled = true}) => AiProviderConfig(
+        id: id,
+        name: id,
+        type: AiProviderType.openai,
+        baseUrl: 'https://a.com/v1',
+        apiKey: 'k',
+        model: 'm-$id',
+        enabled: enabled);
+
+    test('未单独绑定 → 默认最上方启用供应商', () {
+      final s = AiSettings.fresh()..masterEnabled = true;
+      s.providers.addAll([mkProv('a'), mkProv('b')]);
+      expect(s.chatCapability()!.provider.id, 'a');
+    });
+
+    test('跳过未启用的供应商', () {
+      final s = AiSettings.fresh()..masterEnabled = true;
+      s.providers.addAll([mkProv('a', enabled: false), mkProv('b')]);
+      expect(s.chatCapability()!.provider.id, 'b');
+    });
+
+    test('单独绑定的供应商优先', () {
+      final s = AiSettings.fresh()..masterEnabled = true;
+      s.providers.addAll([mkProv('a'), mkProv('b')]);
+      s.features.firstWhere((f) => f.id == 'chat').providerId = 'b';
+      expect(s.chatCapability()!.provider.id, 'b');
+    });
+
+    test('总开关关闭 / 无供应商 → null', () {
+      final s = AiSettings.fresh()
+        ..masterEnabled = false
+        ..providers.add(mkProv('a'));
+      expect(s.chatCapability(), isNull);
+      expect(AiSettings.fresh().masterEnabled, isFalse);
+      final s2 = AiSettings.fresh()..masterEnabled = true;
+      expect(s2.chatCapability(), isNull);
+    });
+
+    test('isAvailable:有可用供应商即显示入口', () {
+      final s = AiSettings.fresh()..masterEnabled = true;
+      s.providers.add(mkProv('a'));
+      expect(AiSettingsStore.available(s), isTrue);
+      s.masterEnabled = false;
+      expect(AiSettingsStore.available(s), isFalse);
+    });
+  });
+
+  group('contextMode', () {
+    test('旧数据 chat 无 contextMode → 默认 tool;其他默认 inject', () {
+      final s = AiSettings.fromJsonString(jsonEncode({
+        'masterEnabled': true,
+        'providers': [],
+        'features': [
+          {'id': 'chat', 'name': '自由对话', 'builtin': true},
+          {'id': 'summary', 'name': '摘要', 'builtin': true, 'enabled': false},
+        ],
+      }));
+      expect(s.features.firstWhere((f) => f.id == 'chat').contextMode, 'tool');
+      expect(s.features.firstWhere((f) => f.id == 'summary').contextMode, 'inject');
+    });
+
+    test('JSON 往返', () {
+      final s = AiSettings.fresh();
+      s.features.firstWhere((f) => f.id == 'summary').contextMode = 'tool';
+      final s2 = AiSettings.fromJsonString(s.toJsonString());
+      expect(s2.features.firstWhere((f) => f.id == 'summary').contextMode, 'tool');
+    });
+
+    test('effectiveFeatures 不含 chat', () {
+      final s = AiSettings.fresh()..masterEnabled = true;
+      s.providers.add(AiProviderConfig(
+          id: 'p', name: 'x', type: AiProviderType.openai,
+          baseUrl: 'https://a.com/v1', apiKey: 'k', model: 'm'));
+      s.features.firstWhere((f) => f.id == 'chat')..enabled = true..providerId = 'p';
+      expect(s.effectiveFeatures(), isEmpty);
+    });
+  });
+
+  group('工具调用消息序列化', () {
+    AiProviderConfig p(AiProviderType t) => AiProviderConfig(
+        id: 'x', name: 'n', type: t, baseUrl: 'https://api.example.com/v1',
+        apiKey: 'k', model: 'm-1');
+
+    test('OpenAI: tool_calls / role:tool / tools 声明', () {
+      final body = jsonDecode(AiService.buildBody(p(AiProviderType.openai),
+          messages: [
+            const AiMessage(role: 'assistant', content: '让我查一下',
+                toolCalls: [AiToolCall(id: 'c1', name: 'read_document', arguments: '{"offset":0,"length":4000}')]),
+            const AiMessage(role: 'tool', content: 'RESULT', toolCallId: 'c1', toolName: 'read_document'),
+          ],
+          streaming: false, includeTools: true)) as Map<String, dynamic>;
+      final msgs = body['messages'] as List;
+      expect(msgs[0]['tool_calls'][0]['function']['name'], 'read_document');
+      expect(msgs[1]['role'], 'tool');
+      expect(msgs[1]['tool_call_id'], 'c1');
+      expect((body['tools'] as List)[0]['function']['name'], 'read_document');
+      expect(body['tool_choice'], 'auto');
+    });
+
+    test('Claude: tool_use / tool_result', () {
+      final body = jsonDecode(AiService.buildBody(p(AiProviderType.claude),
+          messages: [
+            const AiMessage(role: 'assistant', content: '',
+                toolCalls: [AiToolCall(id: 'tu_1', name: 'read_document', arguments: '{}')]),
+            const AiMessage(role: 'tool', content: 'R', toolCallId: 'tu_1', toolName: 'read_document'),
+          ],
+          streaming: false, includeTools: true)) as Map<String, dynamic>;
+      final msgs = body['messages'] as List;
+      expect(msgs[0]['content'][0]['type'], 'tool_use');
+      expect(msgs[1]['content'][0]['type'], 'tool_result');
+      expect(msgs[1]['content'][0]['tool_use_id'], 'tu_1');
+      expect((body['tools'] as List)[0]['name'], 'read_document');
+    });
+
+    test('Gemini: functionCall / functionResponse', () {
+      final body = jsonDecode(AiService.buildBody(p(AiProviderType.gemini),
+          messages: [
+            const AiMessage(role: 'assistant', content: '',
+                toolCalls: [AiToolCall(id: 'fn0', name: 'read_document', arguments: '{"offset":10}')]),
+            const AiMessage(role: 'tool', content: 'R', toolCallId: 'fn0', toolName: 'read_document'),
+          ],
+          streaming: false, includeTools: true)) as Map<String, dynamic>;
+      final msgs = body['contents'] as List;
+      expect(msgs[0]['role'], 'model');
+      expect(msgs[0]['parts'][0]['functionCall']['name'], 'read_document');
+      expect(msgs[1]['parts'][0]['functionResponse']['name'], 'read_document');
+      expect((body['tools'] as List)[0]['functionDeclarations'][0]['name'], 'read_document');
+    });
+
+    test('不带工具时不生成 tools 字段', () {
+      final body = jsonDecode(AiService.buildBody(p(AiProviderType.openai),
+          messages: const [AiMessage(role: 'user', content: 'hi')],
+          streaming: false)) as Map<String, dynamic>;
+      expect(body.containsKey('tools'), isFalse);
+    });
+  });
+
+  group('AiToolCallBuffer 流式累积', () {
+    test('OpenAI 分片按 index 聚合', () {
+      final b = AiToolCallBuffer();
+      b.feed(AiProviderType.openai, AiSseFrame(
+          '{"choices":[{"delta":{"tool_calls":[{"index":0,"id":"c1","function":{"name":"read_document","arguments":"{\\"off"}}]}}]}'));
+      b.feed(AiProviderType.openai, AiSseFrame(
+          '{"choices":[{"delta":{"tool_calls":[{"index":0,"function":{"arguments":"set\\":0}"}}]}}]}'));
+      final calls = b.collect();
+      expect(calls.length, 1);
+      expect(calls[0].id, 'c1');
+      expect(calls[0].name, 'read_document');
+      expect(calls[0].arguments, '{"offset":0}');
+    });
+
+    test('Claude input_json_delta 累积', () {
+      final b = AiToolCallBuffer();
+      b.feed(AiProviderType.claude, AiSseFrame(
+          '{"type":"content_block_start","index":1,"content_block":{"type":"tool_use","id":"tu1","name":"read_document"}}'));
+      b.feed(AiProviderType.claude, AiSseFrame(
+          '{"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"{\\"offset\\":"}}'));
+      b.feed(AiProviderType.claude, AiSseFrame(
+          '{"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"100}"}}'));
+      b.feed(AiProviderType.claude, AiSseFrame('{"type":"content_block_stop","index":1}'));
+      final calls = b.collect();
+      expect(calls.length, 1);
+      expect(calls[0].arguments, '{"offset":100}');
+    });
+
+    test('Gemini functionCall 直接成帧', () {
+      final b = AiToolCallBuffer();
+      b.feed(AiProviderType.gemini, AiSseFrame(
+          '{"candidates":[{"content":{"parts":[{"functionCall":{"name":"read_document","args":{"offset":5}}}]}}]}'));
+      final calls = b.collect();
+      expect(calls.length, 1);
+      expect(calls[0].name, 'read_document');
+      expect(jsonDecode(calls[0].arguments)['offset'], 5);
+    });
+  });
+
+  group('extractResponse 非流式工具调用', () {
+    test('OpenAI message.tool_calls', () {
+      final (text, calls) = AiService.extractResponse(AiProviderType.openai,
+          '{"choices":[{"message":{"content":"","tool_calls":[{"id":"c9","type":"function","function":{"name":"read_document","arguments":"{}"}}]}}]}');
+      expect(text, '');
+      expect(calls[0].id, 'c9');
+    });
+
+    test('Claude tool_use 块', () {
+      final (text, calls) = AiService.extractResponse(AiProviderType.claude,
+          '{"content":[{"type":"text","text":"hi"},{"type":"tool_use","id":"t1","name":"read_document","input":{"offset":3}}]}');
+      expect(text, 'hi');
+      expect(jsonDecode(calls[0].arguments)['offset'], 3);
+    });
+
+    test('Gemini functionCall', () {
+      final (text, calls) = AiService.extractResponse(AiProviderType.gemini,
+          '{"candidates":[{"content":{"parts":[{"functionCall":{"name":"read_document","args":{"length":8000}}}]}}]}');
+      expect(text, '');
+      expect(jsonDecode(calls[0].arguments)['length'], 8000);
+    });
+  });
 }
