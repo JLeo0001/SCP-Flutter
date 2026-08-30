@@ -424,13 +424,18 @@ $customFontFaces
     ${PreferenceService.getBlockquoteStyle() == 1 ? 'border-left: 2px solid $blockBorder; background: transparent; border-radius: 0;' : ''}
     ${PreferenceService.getBlockquoteStyle() == 2 ? 'border-left: none; background: linear-gradient(135deg, $blockBg, transparent); border-radius: 8px; box-shadow: 0 1px 3px rgba(0,0,0,0.05);' : ''}
   }
+  /* ── 防超宽:行内固定宽度元素一律压回可视宽度,页面永不横向溢出 ── */
+  html, body { overflow-x: hidden; }
+  [style*="width"] { max-width: 100% !important; }
+  iframe, embed, object, video { max-width: 100%; }
   ._tablewrap {
     overflow-x: auto;
     margin: 12px 0;
     border-radius: 6px;
     border: 1px solid $blockBorder;
   }
-  ._tablewrap table { width: 100%; border-collapse: collapse; margin: 0; min-width: 480px; }
+  /* width:100% 且不设 min-width:窄表正好铺满,宽表由内容自然撑宽后由包裹层横滚 */
+  ._tablewrap table { width: 100%; border-collapse: collapse; margin: 0; }
   td, th {
     border: 1px solid $blockBorder; padding: 8px 12px;
     text-align: left; vertical-align: top;
@@ -710,6 +715,12 @@ if(document.readyState==='loading'){
 // 修回单层转义后取回 16px 小图,尺寸由 CSS .printuser img 固定 ──
 [].slice.call(document.querySelectorAll('img[src*="avatar.php"]')).forEach(function(im){
   if(im.src.indexOf('&amp;')>=0)im.src=im.src.replace(/&amp;/g,'&');
+});
+// ── 防超宽:所有表格包进 _tablewrap 横向滚动,宽表不再撑破页面布局 ──
+[].slice.call(document.querySelectorAll('table')).forEach(function(tb){
+  if(tb.closest('._tablewrap'))return;
+  var w=document.createElement('div');w.className='_tablewrap';
+  tb.parentNode.insertBefore(w,tb);w.appendChild(tb);
 });
 // ── 自动滚动（rAF 帧驱动，无级平滑；触摸即暂停；到底自动停止）──
 // _post 供全脚本使用（进度上报/自动滚动事件），必须位于顶层作用域
