@@ -752,6 +752,7 @@ class _FeatureEditPageState extends State<_FeatureEditPage> {
               border: const OutlineInputBorder(),
             ),
           ),
+          const SizedBox(height: 14),
           DropdownButtonFormField<String>(
             value: _contextMode,
             decoration: const InputDecoration(

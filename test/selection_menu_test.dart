@@ -116,5 +116,36 @@ void _moveTests() {
           reason: '卡片宽度应为 260(±边框)而非全屏');
       expect(box.size.height, lessThan(150), reason: '折叠时卡片高度应只有图标行高');
     });
+
+    testWidgets('选区移动时位置平滑动画,而非瞬移', (tester) async {
+      SelectionMenu menu(Rect r) => SelectionMenu(
+            selRect: r,
+            bg: Colors.white,
+            fg: Colors.black,
+            border: Colors.grey,
+            dark: false,
+            quick: const [SelectionAction('copy', '复制', Icons.copy)],
+            items: const [],
+            onAction: (_) {},
+          );
+      final host = MaterialApp(
+        home: Scaffold(body: Stack(children: [menu(const Rect.fromLTWH(100, 200, 50, 20))])),
+      );
+      await tester.pumpWidget(host);
+      await tester.pumpAndSettle();
+      final card = find.descendant(
+          of: find.byType(SelectionMenu), matching: find.byType(Column)).first;
+      final start = tester.getTopLeft(card).dy;
+      // 同一元素树内换选区位置(模拟滚动跟随的 move 更新)
+      await tester.pumpWidget(MaterialApp(
+        home: Scaffold(body: Stack(children: [menu(const Rect.fromLTWH(100, 500, 50, 20))])),
+      ));
+      await tester.pump(); // 动画第 0 帧:应仍在旧位置附近
+      final mid = tester.getTopLeft(card).dy;
+      await tester.pumpAndSettle();
+      final end = tester.getTopLeft(card).dy;
+      expect(end, greaterThan(start + 100), reason: '最终应到达新选区旁');
+      expect(mid, lessThan(end - 1), reason: '移动过程应有中间动画帧,而非瞬移到位');
+    });
   });
 }

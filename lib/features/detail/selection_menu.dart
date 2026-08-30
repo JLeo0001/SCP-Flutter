@@ -3,6 +3,7 @@ import 'dart:math' as math;
 import 'dart:ui' show ImageFilter;
 
 import 'package:flutter/material.dart';
+import 'package:flutter/rendering.dart' show RenderProxyBox;
 
 /// ═══════════════════════════════════════════════════════════
 ///  应用内框选菜单 —— WebView 选区上报 + 紧凑浮动菜单(Win11 风格)
@@ -115,6 +116,7 @@ class _SelectionMenuState extends State<SelectionMenu> with SingleTickerProvider
   late final AnimationController _pop =
       AnimationController(vsync: this, duration: const Duration(milliseconds: 180));
   bool _expanded = false;
+  Size? _menuSize; // 实测卡片尺寸,用于选区定位与平滑跟随
 
   @override
   void initState() {
@@ -136,19 +138,40 @@ class _SelectionMenuState extends State<SelectionMenu> with SingleTickerProvider
 
   @override
   Widget build(BuildContext context) {
+    // 首帧用估计尺寸定位,量到真实尺寸后微调(误差在弹出淡入中不可见)
+    final est = _menuSize ?? const Size(260, 48);
     return Positioned.fill(
-      child: CustomSingleChildLayout(
-        delegate: _WinMenuDelegate(widget.selRect),
-        child: FadeTransition(
-          opacity: CurvedAnimation(parent: _pop, curve: Curves.easeOutCubic),
-          child: ScaleTransition(
-            scale: CurvedAnimation(parent: _pop, curve: Curves.easeOutBack),
-            alignment: _growFromTop ? Alignment.topCenter : Alignment.bottomCenter,
-            child: _card(),
+      child: LayoutBuilder(builder: (context, cons) {
+        final pos = computeMenuOffset(sel: widget.selRect, menu: est, bounds: cons.biggest);
+        return Stack(children: [
+          AnimatedPositioned(
+            duration: const Duration(milliseconds: 90),
+            curve: Curves.easeOut,
+            left: pos.dx,
+            top: pos.dy,
+            child: _MeasureSize(
+              onChange: _onMenuSize,
+              child: FadeTransition(
+                opacity: CurvedAnimation(parent: _pop, curve: Curves.easeOutCubic),
+                child: ScaleTransition(
+                  scale: CurvedAnimation(parent: _pop, curve: Curves.easeOutBack),
+                  alignment: _growFromTop ? Alignment.topCenter : Alignment.bottomCenter,
+                  child: _card(),
+                ),
+              ),
+            ),
           ),
-        ),
-      ),
+        ]);
+      }),
     );
+  }
+
+  /// 测量回调发生在布局期,挪到帧末再 setState
+  void _onMenuSize(Size s) {
+    if (_menuSize == s) return;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) setState(() => _menuSize = s);
+    });
   }
 
   Widget _card() {
@@ -287,24 +310,34 @@ class _SelectionMenuState extends State<SelectionMenu> with SingleTickerProvider
   }
 }
 
-/// 按选区位置定位菜单(优先下方,不足则上方)
-class _WinMenuDelegate extends SingleChildLayoutDelegate {
-  final Rect selRect;
-  const _WinMenuDelegate(this.selRect);
+/// 测量子组件尺寸(定位选区浮窗需要知道卡片实际大小)
+class _MeasureSize extends SingleChildRenderObjectWidget {
+  final ValueChanged<Size> onChange;
+  const _MeasureSize({required this.onChange, required super.child});
 
   @override
-  Size getSize(BoxConstraints constraints) => constraints.biggest;
-
-  /// 松约束:卡片按自身内容收缩(260px 药丸),否则默认紧约束会把卡片撑满全屏
-  @override
-  BoxConstraints getConstraintsForChild(BoxConstraints constraints) =>
-      BoxConstraints.loose(constraints.biggest);
+  RenderObject createRenderObject(BuildContext context) =>
+      _RenderMeasureSize(onChange);
 
   @override
-  Offset getPositionForChild(Size size, Size childSize) {
-    return computeMenuOffset(sel: selRect, menu: childSize, bounds: size);
+  void updateRenderObject(
+      BuildContext context, covariant _RenderMeasureSize renderObject) {
+    renderObject.onChange = onChange;
   }
+}
+
+class _RenderMeasureSize extends RenderProxyBox {
+  _RenderMeasureSize(this.onChange);
+
+  ValueChanged<Size> onChange;
+  Size _old = Size.zero;
 
   @override
-  bool shouldRelayout(_WinMenuDelegate old) => old.selRect != selRect;
+  void performLayout() {
+    super.performLayout();
+    if (size != _old) {
+      _old = size;
+      onChange(size);
+    }
+  }
 }
