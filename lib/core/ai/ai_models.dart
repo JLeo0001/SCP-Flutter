@@ -143,7 +143,7 @@ class AiFeatureConfig {
     this.providerId = '',
     this.model = '',
     this.useArticleContext = true,
-    this.contextMode = 'inject',
+    this.contextMode = 'tool', // 全部功能默认工具读取(省 token),不注入全文
     this.systemPrompt = '',
     this.userPromptTemplate = '',
   });
@@ -182,6 +182,10 @@ class AiSettings {
   List<AiFeatureConfig> features;
   int contextMaxChars; // 单次请求携带正文的最大字符数
   bool includeTitle; // 上下文附带文档标题
+
+  /// 一次性迁移标记:旧存档里显式保存的 inject 已全部迁为 tool。
+  /// 未落盘前每次解析都会重跑迁移(幂等);用户此后手选 inject 并保存即固化。
+  bool ctxToolMigrated = false;
 
   AiSettings({
     required this.masterEnabled,
@@ -317,6 +321,7 @@ class AiSettings {
         'features': features.map((e) => e.toJson()).toList(),
         'contextMaxChars': contextMaxChars,
         'includeTitle': includeTitle,
+        'ctxToolMigrated': ctxToolMigrated,
         'v': 1,
       });
 
@@ -332,7 +337,7 @@ class AiSettings {
       for (final d in defaults) {
         if (!loaded.any((f) => f.id == d.id)) loaded.add(d);
       }
-      return AiSettings(
+      final settings = AiSettings(
         masterEnabled: (j['masterEnabled'] ?? false) as bool,
         providers: (j['providers'] as List? ?? [])
             .map((e) => AiProviderConfig.fromJson(e as Map<String, dynamic>))
@@ -341,6 +346,16 @@ class AiSettings {
         contextMaxChars: (j['contextMaxChars'] ?? 6000) as int,
         includeTitle: (j['includeTitle'] ?? true) as bool,
       );
+      // 一次性迁移:旧存档显式保存的 inject 全部迁为工具读取。
+      // 幂等:标记未落盘时重复执行无副作用;用户此后手选 inject 并保存即固化。
+      settings.ctxToolMigrated = (j['ctxToolMigrated'] ?? false) as bool;
+      if (!settings.ctxToolMigrated) {
+        for (final f in settings.features) {
+          if (f.contextMode == 'inject') f.contextMode = 'tool';
+        }
+        settings.ctxToolMigrated = true;
+      }
+      return settings;
     } catch (_) {
       return AiSettings.fresh();
     }

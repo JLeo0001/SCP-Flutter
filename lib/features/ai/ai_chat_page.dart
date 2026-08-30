@@ -40,6 +40,8 @@ class _Msg {
   final String role; // user | assistant
   final String display; // 气泡中显示的文本(功能调用时是模板预览,不含全文)
   String text; // 实际发送/流式累积的内容;user 消息也保存,供后续对话作为历史
+  String reasoning = ''; // 思考过程(仅展示,不回传请求)
+  bool reasoningOpen = false; // 思考过程折叠态
   bool streaming;
   bool error = false;
   final List<String> notes = []; // 工具读取记录,如「读取文档 1–4000 / 12345 字」
@@ -72,7 +74,7 @@ class _AiChatPageState extends State<AiChatPage> {
   final TextEditingController _input = TextEditingController();
   final FocusNode _inputFocus = FocusNode();
 
-  StreamSubscription<String>? _sub;
+  StreamSubscription<AiStreamEvent>? _sub;
   Timer? _flushTimer;
   CancelToken? _cancelToken;
   bool _generating = false;
@@ -269,11 +271,18 @@ class _AiChatPageState extends State<AiChatPage> {
 
     // 节流刷新:delta 只写缓冲,定时统一 setState
     final buf = StringBuffer();
+    final rbuf = StringBuffer();
     _flushTimer?.cancel();
     _flushTimer = Timer.periodic(const Duration(milliseconds: 80), (_) {
-      if (buf.isEmpty) return;
-      assistant.text += buf.toString();
-      buf.clear();
+      if (buf.isEmpty && rbuf.isEmpty) return;
+      if (rbuf.isNotEmpty) {
+        assistant.reasoning += rbuf.toString();
+        rbuf.clear();
+      }
+      if (buf.isNotEmpty) {
+        assistant.text += buf.toString();
+        buf.clear();
+      }
       setState(() {});
       _scrollToBottom();
     });
@@ -299,36 +308,45 @@ class _AiChatPageState extends State<AiChatPage> {
               return r;
             },
             onDelta: buf.write,
+            onReasoning: rbuf.write,
             cancel: token,
           );
           if (gen != _genCount) return;
-          _finishGeneration(assistant, buf);
+          _finishGeneration(assistant, buf, rbuf: rbuf);
         } on AiCancelled {
           if (gen != _genCount) return;
-          _finishGeneration(assistant, buf, stopped: true);
+          _finishGeneration(assistant, buf, rbuf: rbuf, stopped: true);
         } on AiException catch (e) {
           if (gen != _genCount) return;
-          _finishGeneration(assistant, buf, errorText: e.message);
+          _finishGeneration(assistant, buf, rbuf: rbuf, errorText: e.message);
         } catch (e) {
           if (gen != _genCount) return;
-          _finishGeneration(assistant, buf, errorText: '请求失败: $e');
+          _finishGeneration(assistant, buf, rbuf: rbuf, errorText: '请求失败: $e');
         }
       }();
     } else {
       _sub?.cancel();
       _sub = AiService.instance
-          .stream(req.provider, messages: req.messages, system: req.system, model: req.model)
+          .streamEvents(req.provider, messages: req.messages, system: req.system, model: req.model)
           .listen(
-        (delta) {
-          buf.write(delta);
+        (ev) {
+          switch (ev) {
+            case AiTextEvent(:final text):
+              buf.write(text);
+            case AiReasoningEvent(:final text):
+              rbuf.write(text);
+            default:
+              break;
+          }
         },
         onError: (Object e) {
           if (gen != _genCount) return;
-          _finishGeneration(assistant, buf, errorText: e is AiException ? e.message : '请求失败: $e');
+          _finishGeneration(assistant, buf,
+              rbuf: rbuf, errorText: e is AiException ? e.message : '请求失败: $e');
         },
         onDone: () {
           if (gen != _genCount) return;
-          _finishGeneration(assistant, buf);
+          _finishGeneration(assistant, buf, rbuf: rbuf);
         },
         cancelOnError: true,
       );
@@ -374,9 +392,10 @@ class _AiChatPageState extends State<AiChatPage> {
   }
 
   void _finishGeneration(_Msg assistant, StringBuffer buf,
-      {String? errorText, bool stopped = false}) {
+      {StringBuffer? rbuf, String? errorText, bool stopped = false}) {
     _flushTimer?.cancel();
     if (buf.isNotEmpty) assistant.text += buf.toString();
+    if (rbuf != null && rbuf.isNotEmpty) assistant.reasoning += rbuf.toString();
     assistant.streaming = false;
     if (errorText != null) {
       assistant.error = true;
@@ -524,9 +543,13 @@ class _AiChatPageState extends State<AiChatPage> {
   }
 
   Widget _assistantBubble(_Msg m, Color fg, Color sub, int index) {
-    final body = m.streaming
-        ? '${m.text}▌'
-        : (m.text.isEmpty ? '…' : m.text);
+    final String body;
+    if (m.streaming) {
+      // 只在思考阶段(尚无正文)不显示正文光标,交给思考块展示
+      body = (m.text.isEmpty && m.reasoning.isNotEmpty) ? '' : '${m.text}▌';
+    } else {
+      body = m.text.isEmpty ? '…' : m.text;
+    }
     final isLast = index == _msgs.length - 1;
     return Padding(
       padding: const EdgeInsets.only(top: 4, bottom: 10),
@@ -536,14 +559,16 @@ class _AiChatPageState extends State<AiChatPage> {
             padding: const EdgeInsets.only(bottom: 2),
             child: Text('🔧 $n', style: TextStyle(fontSize: 11, color: sub)),
           ),
-        SelectableText(
-          body,
-          style: TextStyle(
-            color: m.error ? Colors.red.shade300 : fg,
-            fontSize: 14.5,
-            height: 1.65,
+        if (m.reasoning.isNotEmpty) _reasoningBlock(m, fg, sub),
+        if (body.isNotEmpty)
+          SelectableText(
+            body,
+            style: TextStyle(
+              color: m.error ? Colors.red.shade300 : fg,
+              fontSize: 14.5,
+              height: 1.65,
+            ),
           ),
-        ),
         const SizedBox(height: 4),
         Row(mainAxisSize: MainAxisSize.min, children: [
           if (!m.streaming && m.text.isNotEmpty && !m.error)
@@ -557,8 +582,63 @@ class _AiChatPageState extends State<AiChatPage> {
     );
   }
 
-  Widget _miniBtn(IconData icon, String tip, Color color, VoidCallback onTap) {
-    return IconButton(
+  /// 思考过程:流式时自动展开灰字,出正文后折叠成一行,点击可查看
+  Widget _reasoningBlock(_Msg m, Color fg, Color sub) {
+    final thinking = m.streaming && m.text.isEmpty;
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        InkWell(
+          borderRadius: BorderRadius.circular(6),
+          onTap: () => setState(() => m.reasoningOpen = !m.reasoningOpen),
+          child: Padding(
+            padding: const EdgeInsets.symmetric(vertical: 2),
+            child: Row(mainAxisSize: MainAxisSize.min, children: [
+              Icon(Icons.psychology_alt_outlined, size: 14, color: sub),
+              const SizedBox(width: 4),
+              Text(
+                m.reasoningOpen ? '收起思考过程' : (thinking ? '思考中…' : '思考过程'),
+                style: TextStyle(fontSize: 11.5, color: sub),
+              ),
+              AnimatedRotation(
+                turns: m.reasoningOpen ? 0.5 : 0,
+                duration: const Duration(milliseconds: 150),
+                child: Icon(Icons.keyboard_arrow_down, size: 15, color: sub),
+              ),
+            ]),
+          ),
+        ),
+        AnimatedSize(
+          duration: const Duration(milliseconds: 150),
+          curve: Curves.easeInOutCubic,
+          alignment: Alignment.topCenter,
+          child: (m.reasoningOpen || thinking)
+              ? Container(
+                  width: double.infinity,
+                  margin: const EdgeInsets.only(top: 2, bottom: 6),
+                  padding: const EdgeInsets.all(8),
+                  decoration: BoxDecoration(
+                    color: fg.withValues(alpha: 0.05),
+                    borderRadius: BorderRadius.circular(8),
+                    border: Border.all(color: fg.withValues(alpha: 0.10)),
+                  ),
+                  child: SelectableText(
+                    thinking ? '${m.reasoning}▌' : m.reasoning,
+                    style: TextStyle(
+                      fontSize: 12.5,
+                      height: 1.55,
+                      color: sub,
+                      fontStyle: FontStyle.italic,
+                    ),
+                  ),
+                )
+              : const SizedBox(width: double.infinity),
+        ),
+      ],
+    );
+  }
+
+  Widget _miniBtn(IconData icon, String tip, Color color, VoidCallback onTap) {    return IconButton(
       visualDensity: VisualDensity.compact,
       padding: EdgeInsets.zero,
       constraints: const BoxConstraints(minWidth: 28, minHeight: 24),

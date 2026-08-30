@@ -762,7 +762,7 @@ class _FeatureEditPageState extends State<_FeatureEditPage> {
               DropdownMenuItem(value: 'tool', child: Text('工具读取(省 token)')),
               DropdownMenuItem(value: 'none', child: Text('不携带文档')),
             ],
-            onChanged: (v) => setState(() => _contextMode = v ?? 'inject'),
+            onChanged: (v) => setState(() => _contextMode = v ?? 'tool'),
           ),
           const SizedBox(height: 6),
           Text(

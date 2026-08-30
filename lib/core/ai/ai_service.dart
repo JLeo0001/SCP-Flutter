@@ -179,6 +179,12 @@ class AiToolEvent extends AiStreamEvent {
   const AiToolEvent(this.calls);
 }
 
+/// 思考过程增量(DeepSeek-R1 reasoning_content / Claude thinking / Gemini thought)
+class AiReasoningEvent extends AiStreamEvent {
+  final String text;
+  const AiReasoningEvent(this.text);
+}
+
 /// 从可能损坏的 JSON 文本解析 Map,失败返回 null
 Map<String, dynamic>? _decodeJson(String s) {
   try {
@@ -537,6 +543,86 @@ class AiService {
     }
   }
 
+  /// 思考过程流式增量:DeepSeek-R1 等 OpenAI 兼容用 delta.reasoning_content
+  /// (OpenRouter 用 delta.reasoning);Claude 用 thinking_delta;Gemini 用 part.thought=true
+  @visibleForTesting
+  static String? extractReasoningDelta(AiProviderType type, AiSseFrame frame) {
+    final j = _json(frame.data);
+    if (j == null) return null;
+    switch (type) {
+      case AiProviderType.openai:
+        final choices = j['choices'];
+        if (choices is! List || choices.isEmpty) return null;
+        final delta = choices[0]['delta'];
+        if (delta is! Map) return null;
+        final r = delta['reasoning_content'] ?? delta['reasoning'];
+        return (r is String && r.isNotEmpty) ? r : null;
+      case AiProviderType.claude:
+        if (j['type'] != 'content_block_delta') return null;
+        final d = j['delta'];
+        if (d is Map && d['type'] == 'thinking_delta' && d['thinking'] is String) {
+          final t = d['thinking'] as String;
+          return t.isEmpty ? null : t;
+        }
+        return null;
+      case AiProviderType.gemini:
+        final cands = j['candidates'];
+        if (cands is! List || cands.isEmpty) return null;
+        final content = cands[0]['content'];
+        if (content is! Map) return null;
+        final parts = content['parts'];
+        if (parts is! List) return null;
+        final buf = StringBuffer();
+        for (final part in parts) {
+          if (part is Map && part['thought'] == true && part['text'] is String) {
+            buf.write(part['text'] as String);
+          }
+        }
+        final s = buf.toString();
+        return s.isEmpty ? null : s;
+    }
+  }
+
+  /// 非流式响应的思考过程全文(openai message.reasoning_content / claude thinking 块 / gemini thought parts)
+  @visibleForTesting
+  static String extractReasoningFull(AiProviderType type, String body) {
+    final j = _json(body);
+    if (j == null) return '';
+    switch (type) {
+      case AiProviderType.openai:
+        final choices = j['choices'];
+        if (choices is! List || choices.isEmpty) return '';
+        final msg = choices[0]['message'];
+        if (msg is! Map) return '';
+        final r = msg['reasoning_content'] ?? msg['reasoning'];
+        return (r is String) ? r : '';
+      case AiProviderType.claude:
+        final content = j['content'];
+        if (content is! List) return '';
+        final buf = StringBuffer();
+        for (final b in content) {
+          if (b is Map && b['type'] == 'thinking' && b['thinking'] is String) {
+            buf.write(b['thinking'] as String);
+          }
+        }
+        return buf.toString();
+      case AiProviderType.gemini:
+        final cands = j['candidates'];
+        if (cands is! List || cands.isEmpty) return '';
+        final content = cands[0]['content'];
+        if (content is! Map) return '';
+        final parts = content['parts'];
+        if (parts is! List) return '';
+        final buf = StringBuffer();
+        for (final part in parts) {
+          if (part is Map && part['thought'] == true && part['text'] is String) {
+            buf.write(part['text'] as String);
+          }
+        }
+        return buf.toString();
+    }
+  }
+
   /// 非流式响应:提取全文 + 工具调用
   @visibleForTesting
   static (String, List<AiToolCall>) extractResponse(AiProviderType type, String body) {
@@ -646,6 +732,8 @@ class AiService {
       }
       if (!streaming) {
         final full = await resp.stream.bytesToString();
+        final reasoning = extractReasoningFull(p.type, full);
+        if (reasoning.isNotEmpty) yield AiReasoningEvent(reasoning);
         final (text, calls) = extractResponse(p.type, full);
         if (text.isNotEmpty) yield AiTextEvent(text);
         if (calls.isNotEmpty) yield AiToolEvent(calls);
@@ -661,6 +749,8 @@ class AiService {
             done = true;
             break;
           }
+          final r = extractReasoningDelta(p.type, frame);
+          if (r != null && r.isNotEmpty) yield AiReasoningEvent(r);
           if (d != null && d.text != null && d.text!.isNotEmpty) yield AiTextEvent(d.text!);
           toolBuf.feed(p.type, frame);
         }
@@ -671,6 +761,8 @@ class AiService {
         for (final frame in parser.end()) {
           final d = extractDelta(p.type, frame);
           if (d == null || d.end) continue;
+          final r = extractReasoningDelta(p.type, frame);
+          if (r != null && r.isNotEmpty) yield AiReasoningEvent(r);
           if (d.text != null && d.text!.isNotEmpty) yield AiTextEvent(d.text!);
         }
       }
@@ -699,9 +791,19 @@ class AiService {
     }
   }
 
+  /// 流式对话(原始事件):文本增量 + 思考过程增量,供 UI 分轨展示
+  Stream<AiStreamEvent> streamEvents(
+    AiProviderConfig p, {
+    required List<AiMessage> messages,
+    String? system,
+    String? model,
+  }) =>
+      _send(p, messages: messages, system: system, model: model);
+
   /// 带工具的对话循环:模型调用工具 → 执行 → 回传结果 → 继续生成,直至产出文本
   ///
-  /// [onDelta] 流式输出每轮的文本增量;[onToolCall] 在执行工具前回调(供 UI 提示)。
+  /// [onDelta] 流式输出每轮的文本增量;[onReasoning] 每轮思考过程增量;
+  /// [onToolCall] 在执行工具前回调(供 UI 提示)。
   Future<String> chatWithTools(
     AiProviderConfig p, {
     required List<AiMessage> messages,
@@ -709,6 +811,7 @@ class AiService {
     String? model,
     required Future<String> Function(AiToolCall call) toolHandler,
     void Function(String delta)? onDelta,
+    void Function(String delta)? onReasoning,
     void Function(AiToolCall call)? onToolCall,
     CancelToken? cancel,
     int maxRounds = 4,
@@ -725,6 +828,8 @@ class AiService {
           case AiTextEvent(:final text):
             buf.write(text);
             onDelta?.call(text);
+          case AiReasoningEvent(:final text):
+            onReasoning?.call(text);
           case AiToolEvent(calls: final batch):
             calls.addAll(batch);
         }

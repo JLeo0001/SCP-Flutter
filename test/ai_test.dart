@@ -554,4 +554,128 @@ void main() {
       expect(jsonDecode(calls[0].arguments)['length'], 8000);
     });
   });
+  _reasoningTests();
+  _contextModeMigrationTests();
+
+}
+
+void _reasoningTests() {
+  group('extractReasoningDelta · 思考增量', () {
+    test('OpenAI 兼容:reasoning_content(DeepSeek-R1)', () {
+      final r = AiService.extractReasoningDelta(
+          AiProviderType.openai, AiSseFrame('{"choices":[{"delta":{"reasoning_content":"让我想想"}}]}'));
+      expect(r, '让我想想');
+    });
+    test('OpenAI 兼容:reasoning(OpenRouter 风格)', () {
+      final r = AiService.extractReasoningDelta(
+          AiProviderType.openai, AiSseFrame('{"choices":[{"delta":{"reasoning":"step 1"}}]}'));
+      expect(r, 'step 1');
+    });
+    test('OpenAI 兼容:正文 delta 不是思考', () {
+      expect(
+          AiService.extractReasoningDelta(
+              AiProviderType.openai, AiSseFrame('{"choices":[{"delta":{"content":"正文"}}]}')),
+          isNull);
+    });
+    test('Claude:thinking_delta', () {
+      final r = AiService.extractReasoningDelta(AiProviderType.claude,
+          AiSseFrame('{"type":"content_block_delta","delta":{"type":"thinking_delta","thinking":"推演中"}}'));
+      expect(r, '推演中');
+    });
+    test('Claude:text_delta 不是思考', () {
+      expect(
+          AiService.extractReasoningDelta(AiProviderType.claude,
+              AiSseFrame('{"type":"content_block_delta","delta":{"type":"text_delta","text":"正文"}}')),
+          isNull);
+    });
+    test('Gemini:part.thought=true', () {
+      final r = AiService.extractReasoningDelta(AiProviderType.gemini,
+          AiSseFrame('{"candidates":[{"content":{"parts":[{"thought":true,"text":"内部推演"}]}}]}'));
+      expect(r, '内部推演');
+    });
+    test('Gemini:普通 part 不是思考', () {
+      expect(
+          AiService.extractReasoningDelta(AiProviderType.gemini,
+              AiSseFrame('{"candidates":[{"content":{"parts":[{"text":"正文"}]}}]}')),
+          isNull);
+    });
+    test('脏 JSON 返回 null', () {
+      expect(AiService.extractReasoningDelta(AiProviderType.openai, AiSseFrame('not json')), isNull);
+    });
+  });
+
+  group('extractReasoningFull · 思考全文(非流式)', () {
+    test('OpenAI 兼容:message.reasoning_content', () {
+      expect(
+          AiService.extractReasoningFull(AiProviderType.openai,
+              '{"choices":[{"message":{"role":"assistant","reasoning_content":"全文思考","content":"答案"}}]}'),
+          '全文思考');
+    });
+    test('Claude:thinking 块', () {
+      expect(
+          AiService.extractReasoningFull(AiProviderType.claude,
+              '{"content":[{"type":"thinking","thinking":"块一"},{"type":"text","text":"答案"}]}'),
+          '块一');
+    });
+    test('Gemini:thought parts 拼接', () {
+      expect(
+          AiService.extractReasoningFull(AiProviderType.gemini,
+              '{"candidates":[{"content":{"parts":[{"thought":true,"text":"思"},{"thought":true,"text":"考"},{"text":"答"}]}}]}'),
+          '思考');
+    });
+    test('无思考内容返回空串', () {
+      expect(
+          AiService.extractReasoningFull(
+              AiProviderType.openai, '{"choices":[{"message":{"role":"assistant","content":"hi"}}]}'),
+          '');
+      expect(AiService.extractReasoningFull(AiProviderType.openai, 'not json'), '');
+    });
+  });
+}
+
+void _contextModeMigrationTests() {
+  Map<String, dynamic> legacyJson({bool? migrated}) => {
+        'masterEnabled': true,
+        'providers': <Map<String, dynamic>>[],
+        'features': [
+          {
+            'id': 'summary', 'name': '内容摘要', 'builtin': true, 'enabled': true,
+            'providerId': '', 'model': '', 'useArticleContext': true,
+            'contextMode': 'inject', 'systemPrompt': '', 'userPromptTemplate': '',
+          },
+          {
+            'id': 'mycustom', 'name': '自定义功能', 'builtin': false, 'enabled': true,
+            'providerId': '', 'model': '', 'useArticleContext': false,
+            'contextMode': 'inject', 'systemPrompt': '', 'userPromptTemplate': '',
+          },
+        ],
+        'contextMaxChars': 6000,
+        'includeTitle': true,
+        if (migrated != null) 'ctxToolMigrated': migrated,
+      };
+
+  group('contextMode 一次性迁移(inject → tool)', () {
+    test('旧存档显式 inject 全部迁为 tool 并置迁移标记', () {
+      final s = AiSettings.fromJsonString(jsonEncode(legacyJson()));
+      expect(s.ctxToolMigrated, isTrue);
+      expect(s.features.map((f) => f.contextMode), everyElement('tool'));
+    });
+
+    test('已迁移存档(带标记):inject 保留,不再翻回', () {
+      final s = AiSettings.fromJsonString(jsonEncode(legacyJson(migrated: true)));
+      expect(s.features.firstWhere((f) => f.id == 'summary').contextMode, 'inject');
+      expect(s.features.firstWhere((f) => f.id == 'mycustom').contextMode, 'inject');
+    });
+
+    test('新建功能默认 contextMode == tool', () {
+      expect(AiFeatureConfig(id: 'x', name: 'X').contextMode, 'tool');
+    });
+
+    test('迁移标记随 toJsonString 持久化并可往返', () {
+      final s = AiSettings.fromJsonString(jsonEncode(legacyJson()));
+      final back = AiSettings.fromJsonString(s.toJsonString());
+      expect(back.ctxToolMigrated, isTrue);
+      expect(back.features.map((f) => f.contextMode), everyElement('tool'));
+    });
+  });
 }
