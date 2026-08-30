@@ -1,7 +1,7 @@
 name: scp_app
 description: SCP基金会 - 中分网站移动端阅读工具
 publish_to: 'none'
-version: 1.0.1+1
+version: 1.0.2+2
 
 environment:
   sdk: ^3.6.2
