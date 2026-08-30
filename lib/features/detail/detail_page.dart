@@ -58,7 +58,9 @@ class _DetailPageState extends State<DetailPage> with WidgetsBindingObserver, Ro
   final ValueNotifier<int> _tocActive = ValueNotifier<int>(-1); // 当前章节索引
   static const MethodChannel _selectionGate =
       MethodChannel('scp_app/selection_gate'); // 原生层吞掉系统选择菜单
-  SelectionReport? _selection; // 当前 WebView 选区(null=无菜单)
+  SelectionReport? get _sel => _selection.value; // 当前 WebView 选区(null=无菜单)
+  final ValueNotifier<SelectionReport?> _selection =
+      ValueNotifier(null); // 用 notifier 而非 setState:滚动跟随时不整页重建
   bool _routeSubscribed = false;
 
   @override
@@ -96,7 +98,7 @@ class _DetailPageState extends State<DetailPage> with WidgetsBindingObserver, Ro
 
   void _setSelectionGate(bool on) {
     _selectionGate.invokeMethod('setSuppress', {'value': on}).catchError((_) {});
-    if (!on && mounted) setState(() => _selection = null);
+    if (!on && mounted) _selection.value = null;
   }
 
   @override
@@ -107,6 +109,7 @@ class _DetailPageState extends State<DetailPage> with WidgetsBindingObserver, Ro
     _stopAutoScroll();
     _stopPositionTimer(saveFinal: true);
     _tocActive.dispose();
+    _selection.dispose();
     if (PreferenceService.getKeepScreenOn()) {
       WidgetsBinding.instance.renderView.automaticSystemUiAdjustment = true;
     }
@@ -814,10 +817,10 @@ $darkFixJs
 $content
 <script>
 (function(){
-  var timer=null;
+  var timer=null,rafId=0,hasSel=false;
   function post(o){try{Selection.postMessage(JSON.stringify(o));}catch(e){}}
   function vp(){var vv=window.visualViewport;return vv?{s:vv.scale,ox:vv.offsetLeft,oy:vv.offsetTop}:{s:1,ox:0,oy:0};}
-  function clearSel(){post({t:'clear'});}
+  function clearSel(){hasSel=false;post({t:'clear'});}
   function report(){
     var s=window.getSelection();
     if(!s||s.isCollapsed||!s.rangeCount){clearSel();return;}
@@ -825,13 +828,28 @@ $content
     if(!txt.trim()){clearSel();return;}
     var r=s.getRangeAt(0).getBoundingClientRect();
     var v=vp();
+    hasSel=true;
     post({t:'show',text:txt.slice(0,20000),
       rect:{x:r.left,y:r.top,w:r.width,h:r.height},scale:v.s,ox:v.ox,oy:v.oy});
   }
   document.addEventListener('selectionchange',function(){clearTimeout(timer);timer=setTimeout(report,320);});
-  window.addEventListener('scroll',clearSel,{passive:true});
-  window.addEventListener('resize',clearSel,{passive:true});
-  document.addEventListener('touchstart',function(){clearSel();},{passive:true});
+  // 滚动/缩放时选区仍在:只更新浮窗位置让它跟着文本走,不清除
+  function follow(){
+    if(!hasSel)return;
+    if(rafId)return;
+    rafId=requestAnimationFrame(function(){
+      rafId=0;
+      var s=window.getSelection();
+      if(!s||s.isCollapsed||!s.rangeCount){clearSel();return;}
+      var r=s.getRangeAt(0).getBoundingClientRect();
+      // 选区完全滚出视口则隐藏浮窗
+      if((r.width===0&&r.height===0)||r.bottom<0||r.top>window.innerHeight){clearSel();return;}
+      var v=vp();
+      post({t:'move',rect:{x:r.left,y:r.top,w:r.width,h:r.height},scale:v.s,ox:v.ox,oy:v.oy});
+    });
+  }
+  window.addEventListener('scroll',follow,{passive:true});
+  window.addEventListener('resize',follow,{passive:true});
   window.__selClear=function(){var s=window.getSelection();if(s){s.removeAllRanges();}clearSel();};
 })();
 </script>
@@ -839,6 +857,8 @@ $content
 
     ctrl.setNavigationDelegate(NavigationDelegate(
       onPageFinished: (_) async {
+        // 新页面没有旧选区:浮窗可能还挂着(触摸不再清空),这里兜底
+        _selection.value = null;
         // 页面渲染完成后恢复阅读位置
         if (_pendingScrollY != null && _pendingScrollY! > 0) {
           try {
@@ -1317,11 +1337,17 @@ $content
   void _onSelectionMessage(JavaScriptMessage msg) {
     final r = SelectionReport.tryParse(msg.message);
     if (!mounted) return;
-    setState(() => _selection = (r != null && r.show) ? r : null);
+    final cur = _selection.value;
+    if (r != null && r.show && r.move) {
+      // 滚动/缩放跟随:只更新矩形,文本沿用当前选区;当前无选区则忽略
+      if (cur != null) _selection.value = SelectionReport(show: true, text: cur.text, rect: r.rect);
+      return;
+    }
+    _selection.value = (r != null && r.show) ? r : null;
   }
 
   void _dismissSelection() {
-    setState(() => _selection = null);
+    _selection.value = null;
     try {
       _webController?.runJavaScript('window.__selClear && window.__selClear()');
     } catch (_) {}
@@ -1342,7 +1368,7 @@ $content
   }
 
   List<SelectionAction> _selectionItems() {
-    final q = (_selection?.text ?? '')
+    final q = (_sel?.text ?? '')
         .trim()
         .replaceAll(RegExp(r'\s+'), ' ');
     final short = q.length <= 12 ? q : '${q.substring(0, 12)}…';
@@ -1355,7 +1381,7 @@ $content
   }
 
   Future<void> _handleSelectionAction(SelectionAction a) async {
-    final text = _selection?.text ?? '';
+    final text = _sel?.text ?? '';
     _dismissSelection();
     switch (a.id) {
       case 'copy':
@@ -1541,17 +1567,21 @@ $content
               : _webController != null
                   ? Stack(children: [
                       WebViewWidget(controller: _webController!),
-                      if (_selection != null)
-                        SelectionMenu(
-                          selRect: _selection!.rect,
-                          bg: pal.bgColor,
-                          fg: pal.fgColor,
-                          border: pal.borderColor,
-                          dark: pal.isDarkTheme,
-                          quick: _selectionQuick(),
-                          items: _selectionItems(),
-                          onAction: _handleSelectionAction,
-                        ),
+                      ValueListenableBuilder<SelectionReport?>(
+                        valueListenable: _selection,
+                        builder: (context, sel, _) => (sel == null)
+                            ? const SizedBox.shrink()
+                            : SelectionMenu(
+                                selRect: sel.rect,
+                                bg: pal.bgColor,
+                                fg: pal.fgColor,
+                                border: pal.borderColor,
+                                dark: pal.isDarkTheme,
+                                quick: _selectionQuick(),
+                                items: _selectionItems(),
+                                onAction: _handleSelectionAction,
+                              ),
+                      ),
                       if (_readingPct >= 0)
                         Positioned(
                           top: fullScreen ? MediaQuery.of(context).padding.top + 8 : 8,

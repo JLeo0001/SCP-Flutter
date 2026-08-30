@@ -17,16 +17,24 @@ class SelectionReport {
   /// 选区在 WebView 视图内的逻辑坐标(已按缩放/视口偏移换算)
   final Rect rect;
 
-  const SelectionReport({required this.show, required this.text, required this.rect});
+  /// true = 滚动跟随的矩形更新(仅 rect 有效,text 需沿用当前选区)
+  final bool move;
 
-  /// 解析 JS 上报的 JSON;t=show{text,rect,scale,ox,oy} / t=clear
+  const SelectionReport({
+    required this.show,
+    required this.text,
+    required this.rect,
+    this.move = false,
+  });
+
+  /// 解析 JS 上报的 JSON;t=show{text,rect,scale,ox,oy} / move{rect,scale,ox,oy} / t=clear
   static SelectionReport? tryParse(String raw) {
     try {
       final j = jsonDecode(raw);
       if (j is! Map<String, dynamic>) return null;
-      if (j['t'] != 'show') return const SelectionReport(show: false, text: '', rect: Rect.zero);
-      final text = (j['text'] as String?) ?? '';
-      if (text.trim().isEmpty) return const SelectionReport(show: false, text: '', rect: Rect.zero);
+      final t = j['t'];
+      if (t == 'clear') return const SelectionReport(show: false, text: '', rect: Rect.zero);
+      if (t != 'show' && t != 'move') return null;
       final r = j['rect'];
       if (r is! Map) return null;
       double d(dynamic v) => (v is num) ? v.toDouble() : 0;
@@ -39,6 +47,9 @@ class SelectionReport {
         d(r['w']) * scale,
         d(r['h']) * scale,
       );
+      if (t == 'move') return SelectionReport(show: true, text: '', rect: rect, move: true);
+      final text = (j['text'] as String?) ?? '';
+      if (text.trim().isEmpty) return const SelectionReport(show: false, text: '', rect: Rect.zero);
       return SelectionReport(show: true, text: text, rect: rect);
     } catch (_) {
       return null;
@@ -283,6 +294,11 @@ class _WinMenuDelegate extends SingleChildLayoutDelegate {
 
   @override
   Size getSize(BoxConstraints constraints) => constraints.biggest;
+
+  /// 松约束:卡片按自身内容收缩(260px 药丸),否则默认紧约束会把卡片撑满全屏
+  @override
+  BoxConstraints getConstraintsForChild(BoxConstraints constraints) =>
+      BoxConstraints.loose(constraints.biggest);
 
   @override
   Offset getPositionForChild(Size size, Size childSize) {

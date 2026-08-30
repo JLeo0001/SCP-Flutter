@@ -59,4 +59,62 @@ void main() {
       expect(off.dy, 12);
     });
   });
+
+  _moveTests();
+}
+
+void _moveTests() {
+  group('SelectionReport.tryParse move(滚动跟随)', () {
+    test('move 消息:只带矩形,move=true,text 为空', () {
+      final r = SelectionReport.tryParse(
+          '{"t":"move","rect":{"x":10,"y":20,"w":30,"h":40},"scale":2,"ox":5,"oy":5}');
+      expect(r, isNotNull);
+      expect(r!.show, isTrue);
+      expect(r.move, isTrue);
+      expect(r.text, '');
+      expect(r.rect, const Rect.fromLTWH(10, 30, 60, 80));
+    });
+
+    test('show 消息 move=false;clear 消息 move=false', () {
+      expect(
+          SelectionReport.tryParse(
+              '{"t":"show","text":"x","rect":{"x":1,"y":1,"w":1,"h":1}}')!
+              .move,
+          isFalse);
+      expect(SelectionReport.tryParse('{"t":"clear"}')!.move, isFalse);
+    });
+  });
+
+  group('SelectionMenu 布局(全屏撑开回归)', () {
+    testWidgets('卡片保持 260px 宽、内容高,不被撑满全屏', (tester) async {
+      await tester.pumpWidget(MaterialApp(
+        home: Scaffold(
+          body: Stack(children: [
+            SelectionMenu(
+              selRect: const Rect.fromLTWH(100, 300, 100, 20),
+              bg: Colors.white,
+              fg: Colors.black,
+              border: Colors.grey,
+              dark: false,
+              quick: const [
+                SelectionAction('copy', '复制', Icons.copy),
+                SelectionAction('fav', '收藏', Icons.bookmark_add),
+              ],
+              items: const [
+                SelectionAction('t2s', '转简体', Icons.spellcheck),
+              ],
+              onAction: (_) {},
+            ),
+          ]),
+        ),
+      ));
+      await tester.pumpAndSettle();
+      final box = tester.renderObject<RenderBox>(
+          find.descendant(
+              of: find.byType(SelectionMenu), matching: find.byType(Column)).first);
+      expect(box.size.width, moreOrLessEquals(260, epsilon: 2),
+          reason: '卡片宽度应为 260(±边框)而非全屏');
+      expect(box.size.height, lessThan(150), reason: '折叠时卡片高度应只有图标行高');
+    });
+  });
 }
