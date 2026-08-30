@@ -394,6 +394,18 @@ $customFontFaces
     border-radius: 8px; margin: 12px 0;
     box-shadow: 0 1px 4px rgba(0,0,0,0.08);
   }
+  /* 用户头像:[[user]] 渲染为 span.printuser>a>img,固定 16px 内联小图标,
+     不参与图片缩放/居中/阴影;JS 侧另修 avatar.php 双重转义的 size 参数 */
+  .printuser img {
+    display: inline-block !important;
+    width: 16px !important;
+    height: 16px !important;
+    max-width: none !important;
+    margin: 0 3px !important;
+    border-radius: 2px;
+    box-shadow: none;
+    vertical-align: -3px;
+  }
   $imgCenterCss
   $imgCss
   h1,h2,h3,h4,h5,h6 {
@@ -693,6 +705,12 @@ if(document.readyState==='loading'){
 }else{
   _initReader();
 }
+// ── 用户头像修复:[[user]] 的 avatar.php URL 被 wikidot 双重转义(&amp;amp;),
+// size=small 参数名变成 amp;size 而失效,服务端返回默认大尺寸头像;
+// 修回单层转义后取回 16px 小图,尺寸由 CSS .printuser img 固定 ──
+[].slice.call(document.querySelectorAll('img[src*="avatar.php"]')).forEach(function(im){
+  if(im.src.indexOf('&amp;')>=0)im.src=im.src.replace(/&amp;/g,'&');
+});
 // ── 自动滚动（rAF 帧驱动，无级平滑；触摸即暂停；到底自动停止）──
 // _post 供全脚本使用（进度上报/自动滚动事件），必须位于顶层作用域
 function _post(o){ try{ if(window.Reader&&Reader.postMessage)Reader.postMessage(JSON.stringify(o)); }catch(e){} }
