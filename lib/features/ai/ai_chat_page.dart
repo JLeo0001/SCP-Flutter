@@ -4,6 +4,7 @@ import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:flutter_markdown/flutter_markdown.dart';
 
 import '../../core/ai/ai_models.dart';
 import '../../core/ai/ai_service.dart';
@@ -561,12 +562,10 @@ class _AiChatPageState extends State<AiChatPage> {
           ),
         if (m.reasoning.isNotEmpty) _reasoningBlock(m, fg, sub),
         if (body.isNotEmpty)
-          SelectableText(
-            body,
-            style: TextStyle(
-              color: m.error ? Colors.red.shade300 : fg,
-              fontSize: 14.5,
-              height: 1.65,
+          SelectionArea(
+            child: MarkdownBody(
+              data: body,
+              styleSheet: _mdStyle(m.error ? Colors.red.shade300 : fg, sub),
             ),
           ),
         const SizedBox(height: 4),
@@ -579,6 +578,44 @@ class _AiChatPageState extends State<AiChatPage> {
             Text('生成中…', style: TextStyle(fontSize: 11, color: sub)),
         ]),
       ]),
+    );
+  }
+
+  /// 助手回复的 Markdown 样式:正文跟随阅读主题前景色,链接按深浅主题取色
+  MarkdownStyleSheet _mdStyle(Color fg, Color sub) {
+    final link = widget.dark ? const Color(0xFF66B3FF) : const Color(0xFF1565C0);
+    return MarkdownStyleSheet.fromTheme(Theme.of(context)).copyWith(
+      p: TextStyle(color: fg, fontSize: 14.5, height: 1.65),
+      listBullet: TextStyle(color: fg, fontSize: 14.5, height: 1.65),
+      h1: TextStyle(color: fg, fontSize: 18, height: 1.4, fontWeight: FontWeight.w700),
+      h2: TextStyle(color: fg, fontSize: 16.5, height: 1.45, fontWeight: FontWeight.w700),
+      h3: TextStyle(color: fg, fontSize: 15.5, height: 1.5, fontWeight: FontWeight.w600),
+      h4: TextStyle(color: fg, fontSize: 14.5, height: 1.5, fontWeight: FontWeight.w600),
+      h5: TextStyle(color: fg, fontSize: 14, height: 1.5, fontWeight: FontWeight.w600),
+      h6: TextStyle(color: fg, fontSize: 13.5, height: 1.5, fontWeight: FontWeight.w600),
+      strong: TextStyle(color: fg, fontWeight: FontWeight.w700),
+      em: TextStyle(color: fg, fontStyle: FontStyle.italic),
+      del: TextStyle(color: sub, decoration: TextDecoration.lineThrough),
+      blockquote: TextStyle(color: sub, fontSize: 14, height: 1.6),
+      blockquoteDecoration: BoxDecoration(
+        border: Border(left: BorderSide(color: fg.withValues(alpha: 0.35), width: 3)),
+        color: fg.withValues(alpha: 0.05),
+      ),
+      code: TextStyle(color: fg, fontSize: 13, backgroundColor: fg.withValues(alpha: 0.08)),
+      codeblockDecoration: BoxDecoration(
+        color: fg.withValues(alpha: 0.06),
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(color: fg.withValues(alpha: 0.12)),
+      ),
+      codeblockPadding: const EdgeInsets.all(10),
+      horizontalRuleDecoration: BoxDecoration(
+        border: Border(top: BorderSide(color: fg.withValues(alpha: 0.2))),
+      ),
+      a: TextStyle(color: link, decoration: TextDecoration.underline),
+      tableHead: TextStyle(color: fg, fontWeight: FontWeight.w600, fontSize: 13.5),
+      tableBody: TextStyle(color: fg, fontSize: 13.5),
+      tableBorder: TableBorder.all(color: fg.withValues(alpha: 0.25)),
+      tableCellsPadding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
     );
   }
 
