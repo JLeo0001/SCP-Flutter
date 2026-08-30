@@ -188,9 +188,9 @@ class _AiChatPageState extends State<AiChatPage> {
 
   void _runFeature(AiFeatureConfig f) {
     if (_generating) return;
-    final provider = _settings.providerById(f.providerId);
+    final provider = _settings.resolveFeatureProvider(f);
     if (provider == null || !provider.enabled) {
-      _snack('「${f.name}」绑定的供应商不可用,请到 AI 设置中检查');
+      _snack('「${f.name}」没有可用供应商,请到 AI 设置中检查');
       return;
     }
     final tpl = f.userPromptTemplate.trim();

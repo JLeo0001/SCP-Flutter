@@ -5,7 +5,8 @@ import 'dart:ui' show ImageFilter;
 import 'package:flutter/material.dart';
 
 /// ═══════════════════════════════════════════════════════════
-///  应用内框选菜单 —— WebView 选区上报 + Windows 11 风格悬浮菜单
+///  应用内框选菜单 —— WebView 选区上报 + 紧凑浮动菜单(Win11 风格)
+///  默认只显示一行图标小药丸,悬浮在选区旁;点展开才显示完整功能列表
 /// ═══════════════════════════════════════════════════════════
 
 /// WebView `Selection` 通道消息解析
@@ -72,15 +73,15 @@ class SelectionAction {
   const SelectionAction(this.id, this.label, this.icon);
 }
 
-/// Windows 11 风格框选菜单:亚克力模糊底、大圆角、顶部图标快捷行 + 图标+文字列表
-class SelectionMenu extends StatelessWidget {
+/// 紧凑浮动框选菜单:一行图标 + 可展开列表,带弹出动画(缩放+淡入)
+class SelectionMenu extends StatefulWidget {
   final Rect selRect;
   final Color bg;
   final Color fg;
   final Color border;
   final bool dark;
-  final List<SelectionAction> quick; // 顶部图标行
-  final List<SelectionAction> items; // 带标签列表
+  final List<SelectionAction> quick; // 常驻图标行
+  final List<SelectionAction> items; // 展开后的带标签列表
   final ValueChanged<SelectionAction> onAction;
 
   const SelectionMenu({
@@ -96,49 +97,103 @@ class SelectionMenu extends StatelessWidget {
   });
 
   @override
+  State<SelectionMenu> createState() => _SelectionMenuState();
+}
+
+class _SelectionMenuState extends State<SelectionMenu> with SingleTickerProviderStateMixin {
+  late final AnimationController _pop =
+      AnimationController(vsync: this, duration: const Duration(milliseconds: 180));
+  bool _expanded = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _pop.forward();
+  }
+
+  @override
+  void dispose() {
+    _pop.dispose();
+    super.dispose();
+  }
+
+  /// 选区中点在屏幕上半 → 菜单在下方,从选区一侧生长
+  bool get _growFromTop {
+    final h = MediaQuery.of(context).size.height;
+    return widget.selRect.center.dy < h / 2;
+  }
+
+  @override
   Widget build(BuildContext context) {
     return Positioned.fill(
       child: CustomSingleChildLayout(
-        delegate: _WinMenuDelegate(selRect),
-        child: Container(
-          width: 280,
-          decoration: BoxDecoration(
-            borderRadius: BorderRadius.circular(12),
-            border: Border.all(color: border.withValues(alpha: dark ? 0.7 : 0.9)),
-            boxShadow: [
-              BoxShadow(
-                color: Colors.black.withValues(alpha: dark ? 0.55 : 0.22),
-                blurRadius: 28,
-                offset: const Offset(0, 10),
-              ),
-            ],
+        delegate: _WinMenuDelegate(widget.selRect),
+        child: FadeTransition(
+          opacity: CurvedAnimation(parent: _pop, curve: Curves.easeOutCubic),
+          child: ScaleTransition(
+            scale: CurvedAnimation(parent: _pop, curve: Curves.easeOutBack),
+            alignment: _growFromTop ? Alignment.topCenter : Alignment.bottomCenter,
+            child: _card(),
           ),
-          child: ClipRRect(
-            borderRadius: BorderRadius.circular(12),
-            child: BackdropFilter(
-              filter: ImageFilter.blur(sigmaX: 18, sigmaY: 18),
-              child: Material(
-                type: MaterialType.transparency,
-                child: Container(
-                  decoration: BoxDecoration(
-                    color: bg.withValues(alpha: dark ? 0.86 : 0.90),
+        ),
+      ),
+    );
+  }
+
+  Widget _card() {
+    return Container(
+      width: 260,
+      decoration: BoxDecoration(
+        borderRadius: BorderRadius.circular(10),
+        border:
+            Border.all(color: widget.border.withValues(alpha: widget.dark ? 0.7 : 0.9)),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withValues(alpha: widget.dark ? 0.5 : 0.2),
+            blurRadius: 22,
+            offset: const Offset(0, 8),
+          ),
+        ],
+      ),
+      child: ClipRRect(
+        borderRadius: BorderRadius.circular(10),
+        child: BackdropFilter(
+          filter: ImageFilter.blur(sigmaX: 16, sigmaY: 16),
+          child: Material(
+            type: MaterialType.transparency,
+            child: Container(
+              color: widget.bg.withValues(alpha: widget.dark ? 0.88 : 0.92),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Padding(
+                    padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 5),
+                    child: Row(
+                      children: [
+                        for (final a in widget.quick) _quickBtn(a),
+                        const Spacer(),
+                        _expandBtn(),
+                      ],
+                    ),
                   ),
-                  child: Column(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      const SizedBox(height: 6),
-                      Row(
-                        children: [
-                          for (final a in quick) _quickBtn(a),
-                        ],
-                      ),
-                      const SizedBox(height: 4),
-                      _sep(),
-                      for (final a in items) _listItem(a),
-                      const SizedBox(height: 4),
-                    ],
+                  ClipRect(
+                    child: AnimatedSize(
+                      duration: const Duration(milliseconds: 160),
+                      curve: Curves.easeInOutCubic,
+                      alignment: Alignment.topCenter,
+                      child: !_expanded
+                          ? const SizedBox(width: double.infinity)
+                          : Column(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                _sep(),
+                                for (final a in widget.items) _listItem(a),
+                                const SizedBox(height: 3),
+                              ],
+                            ),
+                    ),
                   ),
-                ),
+                ],
               ),
             ),
           ),
@@ -149,25 +204,44 @@ class SelectionMenu extends StatelessWidget {
 
   Widget _sep() => Container(
         height: 1,
-        margin: const EdgeInsets.symmetric(horizontal: 10, vertical: 3),
-        color: fg.withValues(alpha: 0.08),
+        margin: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+        color: widget.fg.withValues(alpha: 0.08),
       );
 
   Widget _quickBtn(SelectionAction a) {
     return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 2),
+      padding: const EdgeInsets.symmetric(horizontal: 1),
       child: InkWell(
         borderRadius: BorderRadius.circular(8),
-        onTap: () => onAction(a),
-        child: Container(
-          height: 40,
-          width: 64,
-          alignment: Alignment.center,
-          decoration: BoxDecoration(
-            borderRadius: BorderRadius.circular(8),
-            color: fg.withValues(alpha: 0.05),
+        onTap: () => widget.onAction(a),
+        child: Tooltip(
+          message: a.label,
+          child: Container(
+            height: 38,
+            width: 42,
+            alignment: Alignment.center,
+            decoration: BoxDecoration(
+              borderRadius: BorderRadius.circular(8),
+              color: widget.fg.withValues(alpha: 0.05),
+            ),
+            child: Icon(a.icon, size: 18, color: widget.fg),
           ),
-          child: Icon(a.icon, size: 19, color: fg),
+        ),
+      ),
+    );
+  }
+
+  Widget _expandBtn() {
+    return InkWell(
+      borderRadius: BorderRadius.circular(8),
+      onTap: () => setState(() => _expanded = !_expanded),
+      child: SizedBox(
+        height: 38,
+        width: 34,
+        child: AnimatedRotation(
+          turns: _expanded ? 0.5 : 0,
+          duration: const Duration(milliseconds: 160),
+          child: Icon(Icons.keyboard_arrow_down, size: 20, color: widget.fg.withValues(alpha: 0.7)),
         ),
       ),
     );
@@ -175,23 +249,23 @@ class SelectionMenu extends StatelessWidget {
 
   Widget _listItem(SelectionAction a) {
     return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 6),
+      padding: const EdgeInsets.symmetric(horizontal: 5),
       child: InkWell(
         borderRadius: BorderRadius.circular(8),
-        onTap: () => onAction(a),
+        onTap: () => widget.onAction(a),
         child: Container(
-          height: 40,
-          padding: const EdgeInsets.symmetric(horizontal: 10),
+          height: 38,
+          padding: const EdgeInsets.symmetric(horizontal: 9),
           child: Row(
             children: [
-              Icon(a.icon, size: 18, color: fg.withValues(alpha: 0.85)),
-              const SizedBox(width: 12),
+              Icon(a.icon, size: 17, color: widget.fg.withValues(alpha: 0.85)),
+              const SizedBox(width: 10),
               Expanded(
                 child: Text(
                   a.label,
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
-                  style: TextStyle(fontSize: 14, color: fg),
+                  style: TextStyle(fontSize: 13.5, color: widget.fg),
                 ),
               ),
             ],

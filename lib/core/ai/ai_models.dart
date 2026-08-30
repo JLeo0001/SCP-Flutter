@@ -169,7 +169,7 @@ class AiFeatureConfig {
         providerId: (j['providerId'] ?? '') as String,
         model: (j['model'] ?? '') as String,
         useArticleContext: (j['useArticleContext'] ?? true) as bool,
-        contextMode: (j['contextMode'] ?? 'inject') as String,
+        contextMode: (j['contextMode'] ?? 'tool') as String,
         systemPrompt: (j['systemPrompt'] ?? '') as String,
         userPromptTemplate: (j['userPromptTemplate'] ?? '') as String,
       );
@@ -206,7 +206,7 @@ class AiSettings {
           id: 'summary',
           name: '内容摘要',
           builtin: true,
-          contextMode: 'inject',
+          contextMode: 'tool',
           systemPrompt: '你是 SCP 基金会文档的阅读助手,默认使用中文回答。忠实于原文,不要编造文档中不存在的内容。',
           userPromptTemplate:
               '请阅读以下文档,输出结构化摘要:\n'
@@ -221,7 +221,7 @@ class AiSettings {
           id: 'translate',
           name: '翻译',
           builtin: true,
-          contextMode: 'inject',
+          contextMode: 'tool',
           systemPrompt: '你是专业翻译,熟悉 SCP 基金会的术语与文风。',
           userPromptTemplate:
               '将以下内容翻译为中文(若原文已是中文,则翻译为英文)。'
@@ -231,7 +231,7 @@ class AiSettings {
           id: 'explain',
           name: '名词解释',
           builtin: true,
-          contextMode: 'inject',
+          contextMode: 'tool',
           systemPrompt: '你是 SCP 基金会设定百科,熟悉基金会宇宙的世界观、术语与著名条目。',
           userPromptTemplate:
               '阅读以下文档,解释其中出现的专有名词、缩写、内部梗与设定(如基金会部门、等级制度、著名异常项目等)。'
@@ -252,14 +252,31 @@ class AiSettings {
 
   // ── 查询 ──
 
-  /// 已启用且供应商可解析的快捷功能(不含自由对话;阅读页快捷入口用)
+  /// 已启用且可解析到供应商的快捷功能(不含自由对话;阅读页快捷入口用)。
+  /// 功能未单独绑定供应商时,回退到「默认」= 最上方的启用供应商。
   List<AiFeatureConfig> effectiveFeatures() {
     if (!masterEnabled) return [];
     return features.where((f) {
       if (!f.enabled || f.id == 'chat') return false;
-      final p = providerById(f.providerId);
-      return p != null && p.enabled && p.model.trim().isNotEmpty && p.baseUrl.trim().isNotEmpty;
+      return resolveFeatureProvider(f) != null;
     }).toList();
+  }
+
+  /// 最上方启用的完整供应商(模型/地址已填)
+  AiProviderConfig? topUsableProvider() {
+    for (final c in providers) {
+      if (c.enabled && c.baseUrl.trim().isNotEmpty && c.model.trim().isNotEmpty) return c;
+    }
+    return null;
+  }
+
+  /// 功能实际使用的供应商:自己绑定的优先,否则默认最上方启用供应商
+  AiProviderConfig? resolveFeatureProvider(AiFeatureConfig f) {
+    final bound = providerById(f.providerId);
+    if (bound != null && bound.enabled && bound.baseUrl.trim().isNotEmpty && bound.model.trim().isNotEmpty) {
+      return bound;
+    }
+    return topUsableProvider();
   }
 
   /// 至少一个可用的启用供应商(决定阅读页 AI 入口是否显示)
@@ -280,18 +297,8 @@ class AiSettings {
     } catch (_) {
       f = AiSettings.defaultFeatures().firstWhere((e) => e.id == 'chat');
     }
-    AiProviderConfig? p = providerById(f.providerId);
-    bool usable(AiProviderConfig c) =>
-        c.enabled && c.baseUrl.trim().isNotEmpty && c.model.trim().isNotEmpty;
-    if (p == null || !usable(p)) {
-      for (final c in providers) {
-        if (usable(c)) {
-          p = c;
-          break;
-        }
-      }
-    }
-    if (p == null || !usable(p)) return null;
+    final p = resolveFeatureProvider(f);
+    if (p == null) return null;
     return (provider: p, feature: f);
   }
 
@@ -324,12 +331,6 @@ class AiSettings {
       // 内置功能补齐(升级/旧数据缺项),已有配置优先;chat 无 contextMode 时默认工具读取
       for (final d in defaults) {
         if (!loaded.any((f) => f.id == d.id)) loaded.add(d);
-      }
-      for (final f in loaded) {
-        if (f.id == 'chat' && !(j['features'] as List? ?? []).any((e) =>
-            e is Map && e['id'] == 'chat' && e['contextMode'] != null)) {
-          f.contextMode = 'tool';
-        }
       }
       return AiSettings(
         masterEnabled: (j['masterEnabled'] ?? false) as bool,

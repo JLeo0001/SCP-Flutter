@@ -386,7 +386,7 @@ void main() {
   });
 
   group('contextMode', () {
-    test('旧数据 chat 无 contextMode → 默认 tool;其他默认 inject', () {
+    test('旧数据无 contextMode → 默认 tool', () {
       final s = AiSettings.fromJsonString(jsonEncode({
         'masterEnabled': true,
         'providers': [],
@@ -396,7 +396,7 @@ void main() {
         ],
       }));
       expect(s.features.firstWhere((f) => f.id == 'chat').contextMode, 'tool');
-      expect(s.features.firstWhere((f) => f.id == 'summary').contextMode, 'inject');
+      expect(s.features.firstWhere((f) => f.id == 'summary').contextMode, 'tool');
     });
 
     test('JSON 往返', () {
@@ -412,6 +412,24 @@ void main() {
           id: 'p', name: 'x', type: AiProviderType.openai,
           baseUrl: 'https://a.com/v1', apiKey: 'k', model: 'm'));
       s.features.firstWhere((f) => f.id == 'chat')..enabled = true..providerId = 'p';
+      expect(s.effectiveFeatures(), isEmpty);
+    });
+
+    test('功能未绑定供应商 → 回退最上方启用供应商', () {
+      final s = AiSettings.fresh()..masterEnabled = true;
+      s.providers.add(AiProviderConfig(
+          id: 'p1', name: 'x', type: AiProviderType.openai,
+          baseUrl: 'https://a.com/v1', apiKey: 'k', model: 'm'));
+      final sum = s.features.firstWhere((f) => f.id == 'summary')..enabled = true;
+      expect(sum.providerId, isEmpty);
+      expect(s.resolveFeatureProvider(sum)!.id, 'p1');
+      expect(s.effectiveFeatures().map((f) => f.id), contains('summary'));
+      // 绑定不可解析的供应商 → 同样回退
+      sum.providerId = 'ghost';
+      expect(s.resolveFeatureProvider(sum)!.id, 'p1');
+      // 无任何可用供应商 → null,功能不生效
+      s.providers.clear();
+      expect(s.resolveFeatureProvider(sum), isNull);
       expect(s.effectiveFeatures(), isEmpty);
     });
   });

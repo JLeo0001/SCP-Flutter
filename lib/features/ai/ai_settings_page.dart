@@ -155,10 +155,11 @@ class _AiSettingsPageState extends State<AiSettingsPage> {
 
   String _featureSubtitle(AiFeatureConfig f) {
     if (!f.enabled) return '已停用';
-    final p = _s.providerById(f.providerId);
+    final p = _s.resolveFeatureProvider(f);
     if (p == null) return '未绑定供应商';
     final model = f.model.trim().isNotEmpty ? f.model.trim() : p.model.trim();
-    return '${p.name} · ${model.isEmpty ? "未填模型" : model}';
+    final tag = f.providerId.isEmpty ? '默认(${p.name})' : p.name;
+    return '$tag · ${model.isEmpty ? "未填模型" : model}';
   }
 
   IconData _featureIcon(String id) => switch (id) {
@@ -200,6 +201,7 @@ class _AiSettingsPageState extends State<AiSettingsPage> {
     final f = AiFeatureConfig(
       id: 'custom_${DateTime.now().millisecondsSinceEpoch}',
       name: '自定义功能',
+      contextMode: 'tool',
       useArticleContext: true,
     );
     final changed = await _pushFeature(f);
@@ -475,7 +477,13 @@ class _ProviderEditPageState extends State<_ProviderEditPage> {
                 icon: const Icon(Icons.delete_outline),
                 tooltip: '删除',
                 onPressed: _delete),
-          TextButton(onPressed: _save, child: const Text('保存')),
+          TextButton(
+            onPressed: _save,
+            style: TextButton.styleFrom(
+                foregroundColor:
+                    Theme.of(context).appBarTheme.foregroundColor),
+            child: const Text('保存'),
+          ),
         ],
       ),
       body: ListView(
@@ -671,9 +679,9 @@ class _FeatureEditPageState extends State<_FeatureEditPage> {
 
   void _save() {
     final f = _f;
-    if (_f.enabled && _providerId.isEmpty) {
-      ScaffoldMessenger.of(context)
-          .showSnackBar(const SnackBar(content: Text('启用功能前请先绑定供应商')));
+    if (_f.enabled && widget.settings.resolveFeatureProvider(f) == null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('当前没有可用的供应商,请先在供应商中配置')));
       return;
     }
     f.name = _name.text.trim().isEmpty ? f.id : _name.text.trim();
@@ -693,7 +701,15 @@ class _FeatureEditPageState extends State<_FeatureEditPage> {
     return Scaffold(
       appBar: AppBar(
         title: Text(_builtin ? '编辑功能 · ${_f.name}' : '自定义功能'),
-        actions: [TextButton(onPressed: _save, child: const Text('保存'))],
+        actions: [
+          TextButton(
+            onPressed: _save,
+            style: TextButton.styleFrom(
+                foregroundColor:
+                    Theme.of(context).appBarTheme.foregroundColor),
+            child: const Text('保存'),
+          ),
+        ],
       ),
       body: ListView(
         padding: const EdgeInsets.all(16),
@@ -720,7 +736,7 @@ class _FeatureEditPageState extends State<_FeatureEditPage> {
             decoration: const InputDecoration(
                 labelText: '绑定供应商', border: OutlineInputBorder()),
             items: [
-              const DropdownMenuItem(value: '', child: Text('未选择')),
+              const DropdownMenuItem(value: '', child: Text('默认(最上方供应商)')),
               for (final p in providers)
                 DropdownMenuItem(
                     value: p.id, child: Text('${p.name} (${p.model.trim()})')),
