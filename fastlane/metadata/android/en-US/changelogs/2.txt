@@ -1,0 +1,1 @@
+New: free favorites; backup & restore (7 data categories, merge/replace); Markdown rendering and collapsible reasoning for AI output. Fixed: selection menu full-screen sizing and follow animation; oversized avatars; page overflow with wide elements; About page text. Copy/retry now always available on AI errors.

@@ -1,0 +1,16 @@
+An open-source mobile reader for the SCP Foundation Chinese Branch wiki (scp-wiki-cn.wikidot.com), with a native reading experience and an ad-free, tracking-free design.
+
+<b>Features</b>
+• Built-in article catalog, online reading with per-page caching
+• Optional full offline content library — a data file downloaded on demand from the project's GitHub Releases (always user-initiated, no silent background downloads)
+• Native reading tools: light/dark themes, Material You colors, reading ruler, auto-scroll, document outline, image viewer, reading position restore
+• Text selection menu: copy, free favorites, AI translate / AI explain
+• Draft box and free favorites; every entry stays selectable and copyable
+• Backup &amp; restore: 7 selectable data categories, merge or replace, exported via the system file picker — no storage permission required
+• Simplified/Traditional Chinese conversion (OpenCC data, Apache-2.0)
+
+<b>AI features (optional)</b>
+Bring your own API key and endpoint. Three protocols are supported: OpenAI-compatible, Anthropic Claude, and Google Gemini. Keys are stored locally on the device and requests are only sent when you explicitly trigger a feature on selected text. No analytics, no ads, no tracking SDKs.
+
+<b>License &amp; content</b>
+App code is licensed GPL-3.0-or-later. SCP wiki content is provided under CC BY-SA 3.0 by its respective authors; attribution is shown inside the app.

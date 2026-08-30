@@ -1,0 +1,1 @@
+AI chat: Markdown rendering for responses, collapsible reasoning display, context mode improvements. Fixed oversized avatars in rendered pages. General reading experience improvements.

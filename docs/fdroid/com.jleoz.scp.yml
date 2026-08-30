@@ -1,0 +1,46 @@
+# F-Droid 构建元数据草稿(供 fdroiddata MR 使用)
+# 提交时放置于: fdroiddata 仓库 metadata/com.jleoz.scp.yml
+# 注:此为草稿,srclibs 版本与构建细节由 fdroiddata 打包者最终确认
+Categories:
+  - Reading
+License: GPL-3.0-only
+AuthorName: JLeo0001
+# AuthorEmail: <your-email>
+SourceCode: https://github.com/JLeo0001/SCP-Flutter
+IssueTracker: https://github.com/JLeo0001/SCP-Flutter/issues
+Changelog: https://github.com/JLeo0001/SCP-Flutter/releases
+
+AutoName: SCP基金会
+
+RepoType: git
+Repo: https://github.com/JLeo0001/SCP-Flutter
+
+# 版本号位于 pubspec.yaml(version: 1.0.2+2),不在 AndroidManifest,
+# 因此不能用默认 Tag 模式(仓库另有 offline-db-* tag 会干扰)。
+# UpdateCheckData: <文件>|<versionCode 正则>|<文件或URL>|<versionName 正则>
+UpdateCheckMode: None
+UpdateCheckData: pubspec.yaml|version:\s.+\+(\d+)|.|version:\s(.+)\+
+AutoUpdateMode: None
+
+Builds:
+  # Universal APK
+  - versionName: 1.0.2
+    versionCode: 2
+    commit: v1.0.2
+    output: build/app/outputs/flutter-apk/app-release.apk
+    srclibs:
+      - flutter@3.27.4
+    rm:
+      - ios
+    build:
+      - $$flutter$$/bin/flutter config --no-analytics
+      - $$flutter$$/bin/flutter pub get
+      - $$flutter$$/bin/flutter build apk --release
+  # 如需 ABI split(推荐,可显著减小体积),按指南为每个 ABI 单列构建块:
+  #   versionCode = 10 * <upstream code> + n (1=arm64-v8a, 2=armeabi-v7a, ...)
+  #   build 命令追加 --target-platform android-arm64 / android-arm 并 --split-per-abi
+  # VercodeOperation:
+  #   - 10 * %c + 1
+  #   - 10 * %c + 2
+
+AntiFeatures: []
