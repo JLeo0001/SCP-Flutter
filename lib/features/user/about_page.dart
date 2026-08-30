@@ -133,12 +133,13 @@ class _AboutPageState extends State<AboutPage> {
                       style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16, color: cs.onSurface)),
                   const SizedBox(height: 8),
                   Text(
-                    'APP内容来源自SCP基金会：http://scp-wiki-cn.wikidot.com/\n\n'
-                    '除非特别注明，文章内容采用CC-BY-SA 3.0协议\n'
+                    'APP 内容来源自 SCP 基金会：\n'
+                    'http://scp-wiki-cn.wikidot.com/\n\n'
+                    '除非特别注明，文章内容采用 CC-BY-SA 3.0 协议\n'
                     'https://creativecommons.org/licenses/by-sa/3.0/deed.zh\n\n'
+                    '简繁转换词典基于 OpenCC（Apache-2.0）\n'
+                    'https://github.com/BYVoid/OpenCC\n\n'
                     '欲了解更多信息，查看授权指南：\n'
-                    '简繁转换词典基于OpenCC（Apache-2.0）\\n'
-                    'https://github.com/BYVoid/OpenCC\\n\\n'
                     'http://scp-wiki-cn.wikidot.com/licensing-guide',
                     style: TextStyle(fontSize: 13, height: 1.5, color: cs.onSurface.withValues(alpha: 0.8)),
                   ),
