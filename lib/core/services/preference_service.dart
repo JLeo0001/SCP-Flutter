@@ -155,6 +155,84 @@ class PreferenceService {
 
   static const String _favoriteKey = 'favorite_entries';
 
+  /// 公开键名常量(备份模块用)
+  static const String favoriteKey = _favoriteKey;
+  static const String aiSettingsKey = 'ai_settings';
+
+  /// 导出全部偏好(含阅读设置/用户信息等;调用方自行排除 AI 与收藏等大块数据)
+  static Map<String, dynamic> exportAll() =>
+      {for (final k in _prefs.getKeys()) k: _prefs.get(k)};
+
+  /// 从备份恢复偏好:以现有键的类型为准做强制转换(JSON 往返可能把 2.0 变 int),返回恢复条数
+  static Future<int> importMap(Map<String, dynamic> data) async {
+    var n = 0;
+    for (final e in data.entries) {
+      try {
+        final v = e.value;
+        switch (_prefs.get(e.key)) {
+          case final int _:
+            if (v is num) {
+              await _prefs.setInt(e.key, v.toInt());
+              n++;
+            }
+          case final double _:
+            if (v is num) {
+              await _prefs.setDouble(e.key, v.toDouble());
+              n++;
+            }
+          case final bool _:
+            if (v is bool) {
+              await _prefs.setBool(e.key, v);
+              n++;
+            }
+          case final String _:
+            if (v is String) {
+              await _prefs.setString(e.key, v);
+              n++;
+            }
+          case final List _:
+            if (v is List) {
+              await _prefs
+                  .setStringList(e.key, [for (final x in v) x.toString()]);
+              n++;
+            }
+          default:
+            // 新键:按 JSON 类型兜底写入
+            if (v is bool) {
+              await _prefs.setBool(e.key, v);
+              n++;
+            } else if (v is String) {
+              await _prefs.setString(e.key, v);
+              n++;
+            } else if (v is List) {
+              await _prefs
+                  .setStringList(e.key, [for (final x in v) x.toString()]);
+              n++;
+            }
+        }
+      } catch (_) {}
+    }
+    return n;
+  }
+
+  /// 从备份恢复自由收藏;merge=true 按 id 去重合并,否则整表替换。返回恢复条数
+  static Future<int> importFavorites(List<dynamic> raw,
+      {required bool merge}) async {
+    final list = [
+      for (final e in raw)
+        if (e is Map<String, dynamic>) FavoriteEntry.fromJson(e),
+    ];
+    if (!merge) {
+      await _saveFavorites(list);
+      return list.length;
+    }
+    final exist = getFavorites();
+    final ids = exist.map((e) => e.id).toSet();
+    final merged = [...exist, ...list.where((e) => !ids.contains(e.id))];
+    await _saveFavorites(merged);
+    return merged.length - exist.length;
+  }
+
   static List<FavoriteEntry> getFavorites() =>
       FavoriteEntry.listFromJsonString(_prefs.getString(_favoriteKey) ?? '');
 

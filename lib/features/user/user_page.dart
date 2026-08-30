@@ -4,6 +4,7 @@ import 'package:image_picker/image_picker.dart';
 import 'package:path_provider/path_provider.dart';
 import 'about_page.dart';
 import 'draft_list_page.dart';
+import 'backup_page.dart';
 import 'favorite_list_page.dart';
 import 'download_page.dart';
 import '../later/later_page.dart';
@@ -313,6 +314,10 @@ class _UserPageState extends State<UserPage>
           _buildMenuItem(Icons.bookmarks, '自由收藏', () {
             Navigator.push(context,
                 MaterialPageRoute(builder: (_) => const FavoriteListPage()));
+          }),
+          _buildMenuItem(Icons.backup, '备份与恢复', () {
+            Navigator.push(context,
+                MaterialPageRoute(builder: (_) => const BackupPage()));
           }),
           _buildMenuItem(Icons.download, '文档缓存/本地数据', () {
             Navigator.push(context,
