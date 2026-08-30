@@ -2,6 +2,7 @@ import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:file_picker/file_picker.dart';
 import 'package:path_provider/path_provider.dart';
+import 'backup_page.dart';
 import '../../core/backend/backend_service.dart';
 import '../../core/services/database_helper.dart';
 import '../../core/services/offline_content_db.dart';
@@ -384,15 +385,17 @@ class _DownloadPageState extends State<DownloadPage> {
                 const Text('个性化数据备份', style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
               ]),
               const SizedBox(height: 8),
-              const Text('备份收藏夹、历史记录、阅读位置等数据', style: TextStyle(fontSize: 13)),
+              const Text('备份偏好设置、AI 配置、自由收藏、点赞/已读、历史/待读、阅读位置与草稿', style: TextStyle(fontSize: 13)),
               const SizedBox(height: 12),
-              Row(children: [
-                Expanded(child: OutlinedButton.icon(onPressed: null,
-                    icon: const Icon(Icons.backup), label: const Text('备份'))),
-                const SizedBox(width: 12),
-                Expanded(child: OutlinedButton.icon(onPressed: null,
-                    icon: const Icon(Icons.restore), label: const Text('恢复'))),
-              ]),
+              SizedBox(
+                width: double.infinity,
+                child: FilledButton.tonalIcon(
+                  onPressed: () => Navigator.push(context,
+                      MaterialPageRoute(builder: (_) => const BackupPage())),
+                  icon: const Icon(Icons.settings_backup_restore),
+                  label: const Text('进入备份与恢复'),
+                ),
+              ),
             ],
           ))),
         ],
