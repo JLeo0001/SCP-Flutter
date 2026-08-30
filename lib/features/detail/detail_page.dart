@@ -8,6 +8,7 @@ import 'package:url_launcher/url_launcher.dart';
 import '../../core/constants.dart';
 import '../../core/ai/ai_models.dart';
 import '../../core/ai/article_text.dart';
+import '../../core/models/favorite_model.dart';
 import '../ai/ai_chat_page.dart';
 import '../../core/backend/backend_service.dart';
 import '../../core/backend/backend_types.dart';
@@ -16,6 +17,7 @@ import '../../core/services/preference_service.dart';
 import '../../core/utils/chinese_converter.dart';
 import '../../core/utils/route_observer.dart';
 import '../search/search_page.dart';
+import '../user/favorite_list_page.dart';
 import 'reading_settings.dart';
 import 'selection_menu.dart';
 
@@ -1304,7 +1306,11 @@ $content
     Clipboard.setData(ClipboardData(text: '${SCPConstants.scpSiteUrl}/${widget.link}'));
     _snack('链接已复制');
   }
-  void _snack(String m) => ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(m)));
+  void _snack(String m, {SnackBarAction? action}) =>
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+        content: Text(m),
+        action: action,
+      ));
 
   // ═══ 框选菜单 ═══
 
@@ -1326,6 +1332,7 @@ $content
         AiSettingsStore.loadSync().effectiveFeatures().map((f) => f.id).toSet();
     return [
       const SelectionAction('copy', '复制', Icons.copy),
+      const SelectionAction('favorite', '自由收藏', Icons.bookmark_add),
       if (feats.contains('translate'))
         const SelectionAction('ai_translate', 'AI 翻译', Icons.g_translate),
       if (feats.contains('explain'))
@@ -1344,7 +1351,6 @@ $content
       SelectionAction('web_search', '网页搜索「$short」', Icons.language),
       const SelectionAction('t2s', '转为简体并复制', Icons.spellcheck),
       const SelectionAction('s2t', '转为繁体并复制', Icons.abc),
-      const SelectionAction('draft', '存入草稿箱', Icons.edit_note),
     ];
   }
 
@@ -1369,10 +1375,23 @@ $content
         await _convertCopy(text, false);
       case 's2t':
         await _convertCopy(text, true);
-      case 'draft':
-        PreferenceService.saveDraftContent(
-            '${PreferenceService.getDraftContent()}\n\n> $text');
-        _snack('已存入草稿箱');
+      case 'favorite':
+        final added = await PreferenceService.addFavorite(FavoriteEntry(
+          id: 'f${DateTime.now().microsecondsSinceEpoch}',
+          content: text,
+          source: widget.title,
+          link: '${SCPConstants.scpSiteUrl}/${widget.link}',
+          createdAt: DateTime.now().millisecondsSinceEpoch,
+        ));
+        _snack(added ? '已加入自由收藏' : '已收藏过该选段',
+            action: SnackBarAction(
+              label: '查看',
+              onPressed: () {
+                if (!mounted) return;
+                Navigator.push(context,
+                    MaterialPageRoute(builder: (_) => const FavoriteListPage()));
+              },
+            ));
       case 'ai_translate':
         _openSelectionAi(text, 'translate');
       case 'ai_explain':

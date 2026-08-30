@@ -1,3 +1,4 @@
+import '../models/favorite_model.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 /// 偏好设置服务 — 所有持久化配置
@@ -147,6 +148,49 @@ class PreferenceService {
   static void saveDraftContent(String c) => _prefs.setString('draft_content', c);
   static String getDraftTitle() => _prefs.getString('draft_title') ?? '';
   static void saveDraftTitle(String t) => _prefs.setString('draft_title', t);
+
+  // ═══════════════════════════════════════
+  //  自由收藏 (JSON 列表,见 core/models/favorite_model.dart)
+  // ═══════════════════════════════════════
+
+  static const String _favoriteKey = 'favorite_entries';
+
+  static List<FavoriteEntry> getFavorites() =>
+      FavoriteEntry.listFromJsonString(_prefs.getString(_favoriteKey) ?? '');
+
+  static Future<void> _saveFavorites(List<FavoriteEntry> list) =>
+      _prefs.setString(_favoriteKey, FavoriteEntry.listToJsonString(list));
+
+  /// 新增收藏(插到最前);与最近一条内容相同则视为重复点击,跳过
+  static Future<bool> addFavorite(FavoriteEntry e) async {
+    final list = getFavorites();
+    if (list.isNotEmpty && list.first.content.trim() == e.content.trim()) {
+      return false;
+    }
+    await _saveFavorites([e, ...list]);
+    return true;
+  }
+
+  /// 撤销删除时按原位置放回
+  static Future<void> insertFavoriteAt(int index, FavoriteEntry e) async {
+    final list = getFavorites();
+    final at = index.clamp(0, list.length);
+    await _saveFavorites([...list.sublist(0, at), e, ...list.sublist(at)]);
+  }
+
+  static Future<void> removeFavorite(String id) async {
+    await _saveFavorites(getFavorites().where((e) => e.id != id).toList());
+  }
+
+  static Future<void> updateFavoriteContent(String id, String content) async {
+    await _saveFavorites([
+      for (final e in getFavorites())
+        if (e.id == id) e.copyWith(content: content) else e,
+    ]);
+  }
+
+  static Future<void> clearFavorites() => _saveFavorites(const []);
+
 
   static bool getHideFinished() => _prefs.getBool('hide_finished_article') ?? false;
   static void setHideFinished(bool v) => _prefs.setBool('hide_finished_article', v);

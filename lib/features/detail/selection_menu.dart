@@ -218,7 +218,7 @@ class _SelectionMenuState extends State<SelectionMenu> with SingleTickerProvider
           message: a.label,
           child: Container(
             height: 38,
-            width: 42,
+            width: 40,
             alignment: Alignment.center,
             decoration: BoxDecoration(
               borderRadius: BorderRadius.circular(8),
